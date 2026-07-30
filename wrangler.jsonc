@@ -1,0 +1,9 @@
+{
+  // Worker de assets estáticos: serve o dashboard gerado em dashboard/html.
+  // Deploy no Cloudflare via `npx wrangler deploy` (esteira Git do CF).
+  "name": "dadosmotoboy",
+  "compatibility_date": "2024-11-01",
+  "assets": {
+    "directory": "./dashboard/html"
+  }
+}
