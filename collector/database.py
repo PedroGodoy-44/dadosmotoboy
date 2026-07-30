@@ -12,7 +12,7 @@ Esquema idêntico ao motor v2:
 import re
 import sqlite3
 
-from .config import DB_PATH, FRESCOR_MIN
+from .config import DB_PATH, FRESCOR_MIN, agora
 from .presence import derivar_estado, haversine, parse_ultimo_acesso
 
 RE_PEDIDO = re.compile(r"#(\d{6,})")
@@ -41,6 +41,13 @@ def db_init(path=DB_PATH):
         id_pedido TEXT, id_entregador TEXT, id_situacao TEXT,
         min_passados INTEGER, primeiro_visto TEXT, ultimo_visto TEXT,
         PRIMARY KEY (id_pedido, id_entregador))""")
+    con.execute("""CREATE TABLE IF NOT EXISTS resumo_diario(
+        dia TEXT, id_entregador TEXT, nome TEXT,
+        inicio TEXT, fim TEXT,
+        horas REAL, h_rodando REAL, h_parado REAL,
+        pedidos INTEGER, ocupacao REAL,
+        atualizado_em TEXT,
+        PRIMARY KEY (dia, id_entregador))""")
     con.execute("CREATE INDEX IF NOT EXISTS ix_dia ON snapshot(dia, id_entregador)")
     con.commit()
     return con
@@ -103,6 +110,22 @@ def _reg_entrega(con, pid, mid, sit, minutos, iso):
                      min_passados  = MAX(COALESCE(entrega_vista.min_passados,0),
                                          COALESCE(excluded.min_passados,0))""",
                 (pid, mid, sit, minutos, iso, iso))
+
+
+def gravar_resumo(con, dia, linhas):
+    """Persiste o resumo diário (1 linha por motoboy) calculado por report.analisar.
+
+    Upsert idempotente: reexecutar o relatório do mesmo dia só atualiza os valores.
+    Guarda início/fim do turno e as horas, para o histórico sobreviver à limpeza
+    de snapshots antigos.
+    """
+    ts = agora().isoformat(timespec="seconds")
+    for m in linhas:
+        con.execute("INSERT OR REPLACE INTO resumo_diario VALUES (?,?,?,?,?,?,?,?,?,?,?)",
+                    (dia, m["id"], m["nome"], m.get("inicio"), m.get("fim"),
+                     m["horas"], m["h_rodando"], m["h_parado"],
+                     m["pedidos"], m["ocupacao"], ts))
+    con.commit()
 
 
 def registrar_coleta(con, ts, http, n_lista, n_presente, erro):

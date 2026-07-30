@@ -39,6 +39,7 @@ INTERVALO = 180          # segundos entre snapshots
 FRESCOR_MIN = 10         # até N min de defasagem = considerado presente
 MOVIMENTO_M = 60         # metros mínimos p/ contar como deslocamento
 PICO = (18, 22)          # janela de pico (hora inicial, hora final)
+JANELA = (8, 23)         # janela de presença (hora inicial, hora final inclusive)
 
 
 def agora():

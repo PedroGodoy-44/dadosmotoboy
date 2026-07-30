@@ -13,15 +13,17 @@ import json
 import os
 from collections import defaultdict
 
-from .config import DASHBOARD_HTML, PICO, TEMPLATE_PATH, agora
+from .config import DASHBOARD_HTML, JANELA, PICO, TEMPLATE_PATH, agora
+from .database import gravar_resumo
 
 
-def analisar(con, dia, escala=None, pico=PICO):
+def analisar(con, dia, escala=None, pico=PICO, janela=JANELA):
+    lo, hi = janela
     cur = con.cursor()
     cur.execute("""SELECT hora, COUNT(*), SUM(CASE WHEN erro IS NULL THEN 1 ELSE 0 END)
                    FROM coleta WHERE dia=? GROUP BY hora""", (dia,))
     cob = {h: (t, o or 0) for h, t, o in cur.fetchall()}
-    snaps = {h: v[1] for h, v in cob.items()}
+    snaps = {h: v[1] for h, v in cob.items() if lo <= h <= hi}
     total = sum(snaps.values())
     if not total:
         return None
@@ -31,7 +33,8 @@ def analisar(con, dia, escala=None, pico=PICO):
     nomes = dict(cur.fetchall())
 
     cur.execute("""SELECT id_entregador, hora, SUM(presente)
-                   FROM snapshot WHERE dia=? GROUP BY id_entregador, hora""", (dia,))
+                   FROM snapshot WHERE dia=? AND hora BETWEEN ? AND ?
+                   GROUP BY id_entregador, hora""", (dia, lo, hi))
     grid = defaultdict(dict)
     for mid, h, n in cur.fetchall():
         grid[mid][h] = round(100.0 * (n or 0) / snaps[h], 1) if snaps.get(h) else 0.0
@@ -39,12 +42,13 @@ def analisar(con, dia, escala=None, pico=PICO):
     linhas = []
     for mid, nome in nomes.items():
         cur.execute("""SELECT estado, COUNT(*) FROM snapshot
-                       WHERE dia=? AND id_entregador=? GROUP BY estado""", (dia, mid))
+                       WHERE dia=? AND id_entregador=? AND hora BETWEEN ? AND ?
+                       GROUP BY estado""", (dia, mid, lo, hi))
         est = dict(cur.fetchall())
         n_pres = est.get("RODANDO", 0) + est.get("ATIVO", 0) + est.get("PARADO", 0)
         if not n_pres:
             continue
-        mins = total and (24 * 60 / total) or 3
+        mins = total and ((hi - lo + 1) * 60 / total) or 3
         cur.execute("""SELECT COUNT(DISTINCT id_pedido) FROM entrega_vista
                        WHERE id_entregador=? AND substr(primeiro_visto,1,10)=?""",
                     (mid, dia))
@@ -52,14 +56,22 @@ def analisar(con, dia, escala=None, pico=PICO):
         base_p = [h for h in range(pico[0], pico[1] + 1) if snaps.get(h)]
         cob_p = [h for h in base_p if grid[mid].get(h, 0) >= 50]
 
+        # início/fim do turno = 1º e último snapshot presente dentro da janela
+        cur.execute("""SELECT MIN(ts), MAX(ts) FROM snapshot
+                       WHERE dia=? AND id_entregador=? AND presente=1
+                         AND hora BETWEEN ? AND ?""", (dia, mid, lo, hi))
+        t0, t1 = cur.fetchone()
+
         item = {
             "id": mid, "nome": nome,
+            "inicio": t0[11:16] if t0 else None,
+            "fim": t1[11:16] if t1 else None,
             "horas": round(n_pres * mins / 60, 2),
             "h_rodando": round(est.get("RODANDO", 0) * mins / 60, 2),
             "h_parado": round(est.get("PARADO", 0) * mins / 60, 2),
             "pedidos": peds,
             "pico_cob": len(cob_p), "pico_tot": len(base_p),
-            "grid": {str(h): grid[mid].get(h, 0.0) for h in range(24)},
+            "grid": {str(h): grid[mid].get(h, 0.0) for h in range(lo, hi + 1)},
         }
         item["ocupacao"] = (round(100.0 * item["h_rodando"] / item["horas"], 1)
                             if item["horas"] else 0.0)
@@ -77,7 +89,7 @@ def analisar(con, dia, escala=None, pico=PICO):
     linhas.sort(key=lambda x: -x["horas"])
 
     onl = {}
-    for h in range(24):
+    for h in range(lo, hi + 1):
         if not snaps.get(h):
             onl[str(h)] = None
             continue
@@ -85,8 +97,8 @@ def analisar(con, dia, escala=None, pico=PICO):
         onl[str(h)] = round((cur.fetchone()[0] or 0) / snaps[h], 1)
 
     return {"dia": dia, "snapshots": total,
-            "tentativas": sum(v[0] for v in cob.values()),
-            "cobertura": {str(h): snaps.get(h, 0) for h in range(24)},
+            "tentativas": sum(t for h, (t, o) in cob.items() if lo <= h <= hi),
+            "cobertura": {str(h): snaps.get(h, 0) for h in range(lo, hi + 1)},
             "online_hora": onl, "motoboys": linhas, "tem_escala": bool(escala)}
 
 
@@ -113,7 +125,7 @@ def imprimir(r):
     print(f"\n{'HORA':<6}{'PRESENTES':>11}")
     print("-" * 30)
     for h in range(24):
-        n = r["online_hora"][str(h)]
+        n = r["online_hora"].get(str(h))
         if n is None:
             continue
         print(f"{h:02d}h{'':<3}{n:>7.1f}  {'#'*int(round(n))}")
@@ -157,6 +169,7 @@ def gerar(con, dia=None):
         res = analisar(con, d, escala_dia(esc, d) if esc else None)
         if res:
             pay["dias"][d] = res
+            gravar_resumo(con, d, res["motoboys"])
     if not pay["dias"]:
         return None, None, False
     primeiro = dias[0] if dias and dias[0] in pay["dias"] else next(iter(pay["dias"]))
