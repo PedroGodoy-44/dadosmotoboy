@@ -1,47 +1,34 @@
 #!/usr/bin/env bash
 # =============================================================================
-#  deploy.sh — publica o dashboard no Cloudflare Pages via Wrangler.
-#  Fluxo: relatorio fresco -> wrangler pages deploy -> imprime a URL.
-#  Tokens vem do .env (nunca do Git). Aborta com msg clara se faltar algo.
+#  deploy.sh — publica o dashboard via Git -> Cloudflare Pages.
+#  Regenera o HTML; se mudou, commita e da push. O Cloudflare Pages (conectado
+#  ao repositorio) publica automaticamente a cada push. Sem Node/wrangler/token.
+#  Chamado pelo systemd (motoboys-deploy.path) sempre que o HTML muda.
 # =============================================================================
 set -euo pipefail
 
 BASE="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/.." && pwd)"
 cd "$BASE"
 
-# --- .env ---------------------------------------------------------------------
-if [[ -f "$BASE/.env" ]]; then
-  set -a; source "$BASE/.env"; set +a
-fi
-: "${CF_PAGES_PROJECT:=motoboys}"
+HTML="dashboard/html/index.html"
 
-if [[ -z "${CLOUDFLARE_API_TOKEN:-}" || -z "${CLOUDFLARE_ACCOUNT_ID:-}" ]]; then
-  echo "!! Faltam CLOUDFLARE_API_TOKEN / CLOUDFLARE_ACCOUNT_ID no .env — deploy abortado." >&2
-  echo "   Preencha $BASE/.env e tente de novo." >&2
-  exit 1
-fi
-
-# --- wrangler disponivel? -----------------------------------------------------
-WRANGLER=""
-if [[ -x "$BASE/cloudflare/node_modules/.bin/wrangler" ]]; then
-  WRANGLER="$BASE/cloudflare/node_modules/.bin/wrangler"
-elif command -v wrangler >/dev/null 2>&1; then
-  WRANGLER="wrangler"
-elif command -v npx >/dev/null 2>&1; then
-  WRANGLER="npx --yes wrangler"
-else
-  echo "!! Node/Wrangler ausentes — deploy abortado." >&2
-  echo "   Instale:  sudo pacman -S nodejs npm  &&  (cd cloudflare && npm install)" >&2
-  exit 1
-fi
-
-# --- relatorio fresco ---------------------------------------------------------
-echo "==> Gerando relatorio..."
+# 1) HTML fresco (write-if-changed: so reescreve se o conteudo mudou)
 "$BASE/.venv/bin/python" -m collector.collector --relatorio || true
 
-# --- publica ------------------------------------------------------------------
-echo "==> Publicando em Cloudflare Pages (projeto: $CF_PAGES_PROJECT)..."
-cd "$BASE/cloudflare"
-$WRANGLER pages deploy "$BASE/dashboard/html" \
-  --project-name="$CF_PAGES_PROJECT" \
-  --commit-dirty=true
+# 2) nada mudou em relacao ao ultimo commit? nao faz nada (evita commit vazio)
+if git diff --quiet -- "$HTML" && git ls-files --error-unmatch "$HTML" >/dev/null 2>&1; then
+  echo "Dashboard sem alteracao — nada a publicar."
+  exit 0
+fi
+
+# 3) commit + push -> Cloudflare Pages publica sozinho
+git add "$HTML"
+git commit -m "dashboard: atualiza $(date '+%Y-%m-%d %H:%M')" \
+  || { echo "Nada para commitar."; exit 0; }
+
+if git push; then
+  echo "Push enviado — Cloudflare Pages vai publicar em instantes."
+else
+  echo "!! git push falhou (chave SSH? repo?). O commit local ficou salvo." >&2
+  exit 1
+fi

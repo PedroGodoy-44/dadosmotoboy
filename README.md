@@ -59,30 +59,26 @@ Quando a sessão expirar, o log mostra `SESSAO_EXPIRADA` — repita os passos 1�
 
 ---
 
-## Deploy no Cloudflare Pages
+## Deploy no Cloudflare Pages (via Git)
 
-1. Preencha o `.env` (criado pelo install a partir do `.env.example`):
-   ```
-   CLOUDFLARE_API_TOKEN=...     # Dashboard > API Tokens > "Cloudflare Pages: Edit"
-   CLOUDFLARE_ACCOUNT_ID=...
-   CF_PAGES_PROJECT=motoboys
-   ```
-2. Instale o wrangler local (uma vez):
-   ```bash
-   cd cloudflare && npm install && cd ..
-   ```
-3. Publique:
-   ```bash
-   make deploy
-   ```
-   No primeiro deploy o **projeto Pages é criado** automaticamente. O comando
-   imprime a URL pública ao final.
+O dashboard é publicado pelo **Cloudflare Pages conectado ao repositório GitHub**
+(`PedroGodoy-44/dadosmotoboy`). O Cloudflare publica **a cada push** — não precisa de
+Node, wrangler nem API token.
+
+Configuração no Cloudflare Pages: **Build command** vazio · **Build output directory**
+`dashboard/html`.
+
+Publicar manualmente:
+```bash
+make deploy      # gera o HTML, e se mudou: git commit + git push
+```
 
 **Automático:** o `motoboys-report.timer` regenera o HTML a cada 5 min; quando o
-conteúdo muda, o `motoboys-deploy.path` dispara o deploy sozinho. Nenhuma ação
-manual é necessária depois de configurado.
+conteúdo muda de fato, o `motoboys-deploy.path` dispara o `deploy.sh`, que commita e dá
+push — o Cloudflare publica sozinho. Nenhuma ação manual depois de configurado.
 
-> Tokens vivem **só** no `.env` (gitignored). Nunca são versionados nem logados.
+> O push usa a **chave SSH** (`~/.ssh/id_ed25519`, sem passphrase) cadastrada no GitHub.
+> O `index.html` é versionado de propósito; segredos ficam gitignored.
 
 ---
 
