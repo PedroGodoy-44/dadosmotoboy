@@ -1,0 +1,7 @@
+[Unit]
+Description=Gera o relatorio HTML de presenca de motoboys
+
+[Service]
+Type=oneshot
+WorkingDirectory=%BASE%
+ExecStart=%BASE%/.venv/bin/python -m collector.collector --relatorio

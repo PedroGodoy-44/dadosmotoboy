@@ -1,0 +1,27 @@
+# segredos
+.env
+curl.txt
+
+# runtime do coletor
+collector/config.json
+collector/database.db
+collector/database.db-wal
+collector/database.db-shm
+collector/escala.csv
+collector/logs/
+collector/_amostra_mapa.json
+
+# saida gerada
+# index.html É versionado de propósito: é o que o Cloudflare Pages (Git) publica.
+dashboard/html/*.tmp
+dashboard/build/
+
+# ambiente / backups
+.venv/
+backups/
+__pycache__/
+*.pyc
+
+# cloudflare
+cloudflare/node_modules/
+cloudflare/.wrangler/

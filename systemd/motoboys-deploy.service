@@ -1,0 +1,7 @@
+[Unit]
+Description=Publica o dashboard de motoboys no Cloudflare Pages
+
+[Service]
+Type=oneshot
+WorkingDirectory=%BASE%
+ExecStart=%BASE%/scripts/deploy.sh

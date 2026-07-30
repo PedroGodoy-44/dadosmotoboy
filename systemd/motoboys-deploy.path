@@ -1,0 +1,9 @@
+[Unit]
+Description=Observa o HTML do dashboard e dispara o deploy quando muda
+
+[Path]
+PathChanged=%BASE%/dashboard/html/index.html
+Unit=motoboys-deploy.service
+
+[Install]
+WantedBy=default.target

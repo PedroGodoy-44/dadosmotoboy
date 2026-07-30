@@ -1,0 +1,61 @@
+<!doctype html><html lang=pt-BR><head><meta charset=utf-8>
+<meta name=viewport content="width=device-width,initial-scale=1">
+<title>Motoboys</title><style>
+*{box-sizing:border-box}body{margin:0;background:#0f1115;color:#e6e8ee;
+font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;padding:24px}
+h1{font-size:20px;margin:0 0 4px}.s{color:#8b93a7;font-size:13px;margin-bottom:16px}
+.card{background:#171a21;border:1px solid #242835;border-radius:10px;padding:16px;margin:16px 0}
+.k{display:flex;gap:12px;flex-wrap:wrap}.kp{background:#171a21;border:1px solid #242835;
+border-radius:10px;padding:12px 16px;min-width:120px}.kp b{display:block;font-size:22px;color:#fff}
+.kp span{color:#8b93a7;font-size:12px}
+table{width:100%;border-collapse:collapse;font-size:13px}
+th{text-align:left;color:#8b93a7;font-weight:500;padding:6px 8px;font-size:11px;
+text-transform:uppercase;border-bottom:1px solid #242835}
+td{padding:6px 8px;border-bottom:1px solid #1c2029}
+.g{display:flex;gap:2px}.c{width:14px;height:20px;border-radius:2px}
+.nm{white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis}
+.bad{color:#ff6b6b}.ok{color:#51cf66}.wr{color:#ffd43b}
+select{background:#171a21;color:#e6e8ee;border:1px solid #242835;border-radius:6px;padding:6px 10px}
+.lg{color:#5b6478;font-size:11px;margin-top:8px}</style></head><body>
+<h1>Presenca real de motoboys</h1><div class=s id=s></div>
+<select id=sel></select><div id=app></div><script>const P=__DATA__;
+function cor(v){if(v==null)return"#1c2029";if(v>=90)return"#2f9e44";if(v>=60)return"#66a80f";
+if(v>=30)return"#e8590c";if(v>0)return"#c92a2a";return"#1c2029"}
+function R(d){const r=P.dias[d],a=document.getElementById("app");
+if(!r){a.innerHTML="<div class=card>Sem dados.</div>";return}
+const th=r.motoboys.reduce((s,m)=>s+m.horas,0),tr=r.motoboys.reduce((s,m)=>s+m.h_rodando,0);
+let h=`<div class=k>
+<div class=kp><b>${r.motoboys.length}</b><span>motoboys</span></div>
+<div class=kp><b>${th.toFixed(1)}h</b><span>horas online</span></div>
+<div class=kp><b>${tr.toFixed(1)}h</b><span>horas rodando</span></div>
+<div class=kp><b>${th?Math.round(tr/th*100):0}%</b><span>ocupacao media</span></div>
+<div class=kp><b>${Math.round(r.snapshots/Math.max(1,r.tentativas)*100)}%</b><span>cobertura coletor</span></div></div>`;
+h+=`<div class=card><table><tr><th>Motoboy</th><th>Presenca 00h&rarr;23h</th><th>Horas</th>
+<th>Rodando</th><th>Ocup</th><th>Ped</th>${r.tem_escala?"<th>Aderencia</th>":""}</tr>`;
+r.motoboys.forEach(m=>{let g="<div class=g>";
+for(let i=0;i<24;i++){const v=r.cobertura[i]>0?m.grid[i]:null;
+g+=`<div class=c style="background:${cor(v)}" title="${i}h: ${v==null?"sem coleta":v+"%"}"></div>`}
+g+="</div>";let ad="";if(r.tem_escala){const v=m.aderencia;
+ad=`<td class="${v==null?"":v>=90?"ok":v>=60?"wr":"bad"}">${v==null?"-":v+"%"}</td>`}
+h+=`<tr><td class=nm>${m.nome}</td><td>${g}</td><td>${m.horas.toFixed(1)}</td>
+<td>${m.h_rodando.toFixed(1)}</td><td class="${m.ocupacao>=50?"ok":m.ocupacao>=25?"wr":"bad"}">${m.ocupacao}%</td>
+<td>${m.pedidos}</td>${ad}</tr>`});
+h+=`</table><div class=lg>Verde = presente quase toda a hora - vermelho = presenca baixa -
+cinza = sem coleta. Ocupacao = horas com pedido / horas online.</div></div>`;
+const f=r.motoboys.filter(m=>m.faltou&&m.faltou.length);
+if(f.length){h+=`<div class=card><h3 style="margin:0 0 10px;font-size:14px">Escala x real</h3>
+<table><tr><th>Motoboy</th><th>Escaladas</th><th>Cumpridas</th><th>Faltou</th></tr>`;
+f.forEach(m=>{h+=`<tr><td class=nm>${m.nome}</td><td>${m.escala_h}</td><td>${m.escala_ok}</td>
+<td class=bad>${m.faltou.map(x=>String(x).padStart(2,"0")+"h").join(", ")}</td></tr>`});
+h+="</table></div>"}
+h+=`<div class=card><h3 style="margin:0 0 10px;font-size:14px">Presentes por hora</h3><table>`;
+for(let i=0;i<24;i++){const n=r.online_hora[i];if(n==null)continue;
+h+=`<tr><td style=width:50px>${String(i).padStart(2,"0")}h</td><td>
+<div style="background:#4c6ef5;height:14px;border-radius:3px;width:${Math.min(100,n*10)}%"></div></td>
+<td style=width:50px>${n.toFixed(1)}</td></tr>`}
+h+="</table></div>";a.innerHTML=h}
+(function(){const ds=Object.keys(P.dias).sort().reverse();
+document.getElementById("s").textContent=`gerado ${P.gerado_em} - ${ds.length} dia(s)`;
+const s=document.getElementById("sel");
+s.innerHTML=ds.map(d=>`<option value="${d}">${d}</option>`).join("");
+s.onchange=()=>R(s.value);R(ds[0])})();</script></body></html>

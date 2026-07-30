@@ -1,0 +1,10 @@
+[Unit]
+Description=Regenera o relatorio de motoboys periodicamente
+
+[Timer]
+OnBootSec=2min
+OnUnitActiveSec=5min
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,0 +1,165 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+report.py — análise dos snapshots + saída (console e HTML).
+
+O HTML é gerado com "write-if-changed": só substitui dashboard/html/index.html
+quando o conteúdo muda de fato, para que o systemd .path só dispare o deploy
+em alteração real.
+"""
+
+import hashlib
+import json
+import os
+from collections import defaultdict
+
+from .config import DASHBOARD_HTML, PICO, TEMPLATE_PATH, agora
+
+
+def analisar(con, dia, escala=None, pico=PICO):
+    cur = con.cursor()
+    cur.execute("""SELECT hora, COUNT(*), SUM(CASE WHEN erro IS NULL THEN 1 ELSE 0 END)
+                   FROM coleta WHERE dia=? GROUP BY hora""", (dia,))
+    cob = {h: (t, o or 0) for h, t, o in cur.fetchall()}
+    snaps = {h: v[1] for h, v in cob.items()}
+    total = sum(snaps.values())
+    if not total:
+        return None
+
+    cur.execute("""SELECT id_entregador, COALESCE(nome,id_entregador)
+                   FROM snapshot WHERE dia=? GROUP BY id_entregador""", (dia,))
+    nomes = dict(cur.fetchall())
+
+    cur.execute("""SELECT id_entregador, hora, SUM(presente)
+                   FROM snapshot WHERE dia=? GROUP BY id_entregador, hora""", (dia,))
+    grid = defaultdict(dict)
+    for mid, h, n in cur.fetchall():
+        grid[mid][h] = round(100.0 * (n or 0) / snaps[h], 1) if snaps.get(h) else 0.0
+
+    linhas = []
+    for mid, nome in nomes.items():
+        cur.execute("""SELECT estado, COUNT(*) FROM snapshot
+                       WHERE dia=? AND id_entregador=? GROUP BY estado""", (dia, mid))
+        est = dict(cur.fetchall())
+        n_pres = est.get("RODANDO", 0) + est.get("ATIVO", 0) + est.get("PARADO", 0)
+        if not n_pres:
+            continue
+        mins = total and (24 * 60 / total) or 3
+        cur.execute("""SELECT COUNT(DISTINCT id_pedido) FROM entrega_vista
+                       WHERE id_entregador=? AND substr(primeiro_visto,1,10)=?""",
+                    (mid, dia))
+        peds = cur.fetchone()[0]
+        base_p = [h for h in range(pico[0], pico[1] + 1) if snaps.get(h)]
+        cob_p = [h for h in base_p if grid[mid].get(h, 0) >= 50]
+
+        item = {
+            "id": mid, "nome": nome,
+            "horas": round(n_pres * mins / 60, 2),
+            "h_rodando": round(est.get("RODANDO", 0) * mins / 60, 2),
+            "h_parado": round(est.get("PARADO", 0) * mins / 60, 2),
+            "pedidos": peds,
+            "pico_cob": len(cob_p), "pico_tot": len(base_p),
+            "grid": {str(h): grid[mid].get(h, 0.0) for h in range(24)},
+        }
+        item["ocupacao"] = (round(100.0 * item["h_rodando"] / item["horas"], 1)
+                            if item["horas"] else 0.0)
+        if escala:
+            esp = escala.get(nome.strip().lower(), set())
+            afer = [h for h in esp if snaps.get(h)]
+            if afer:
+                cump = [h for h in afer if grid[mid].get(h, 0) >= 50]
+                item["escala_h"] = len(afer)
+                item["escala_ok"] = len(cump)
+                item["aderencia"] = round(100.0 * len(cump) / len(afer), 1)
+                item["faltou"] = sorted(set(afer) - set(cump))
+        linhas.append(item)
+
+    linhas.sort(key=lambda x: -x["horas"])
+
+    onl = {}
+    for h in range(24):
+        if not snaps.get(h):
+            onl[str(h)] = None
+            continue
+        cur.execute("SELECT SUM(presente) FROM snapshot WHERE dia=? AND hora=?", (dia, h))
+        onl[str(h)] = round((cur.fetchone()[0] or 0) / snaps[h], 1)
+
+    return {"dia": dia, "snapshots": total,
+            "tentativas": sum(v[0] for v in cob.values()),
+            "cobertura": {str(h): snaps.get(h, 0) for h in range(24)},
+            "online_hora": onl, "motoboys": linhas, "tem_escala": bool(escala)}
+
+
+def imprimir(r):
+    if not r:
+        return print("Sem dados.")
+    print(f"\n{'='*84}\n  MOTOBOYS — {r['dia']}  "
+          f"({r['snapshots']}/{r['tentativas']} snapshots)\n{'='*84}\n")
+    c = (f"{'MOTOBOY':<28}{'HORAS':>7}{'RODANDO':>9}{'PARADO':>8}"
+         f"{'OCUP%':>7}{'PED':>5}{'PICO':>7}")
+    if r["tem_escala"]:
+        c += f"{'ADER':>7}"
+    print(c)
+    print("-" * len(c))
+    for m in r["motoboys"]:
+        pk = f"{m['pico_cob']}/{m['pico_tot']}"
+        ln = (f"{m['nome'][:27]:<28}{m['horas']:>7.1f}{m['h_rodando']:>9.1f}"
+              f"{m['h_parado']:>8.1f}{m['ocupacao']:>7.0f}{m['pedidos']:>5}"
+              f"{pk:>7}")
+        if r["tem_escala"]:
+            a = m.get("aderencia")
+            ln += f"{('-' if a is None else f'{a:.0f}%'):>7}"
+        print(ln)
+    print(f"\n{'HORA':<6}{'PRESENTES':>11}")
+    print("-" * 30)
+    for h in range(24):
+        n = r["online_hora"][str(h)]
+        if n is None:
+            continue
+        print(f"{h:02d}h{'':<3}{n:>7.1f}  {'#'*int(round(n))}")
+    if r["tem_escala"]:
+        f = [m for m in r["motoboys"] if m.get("faltou")]
+        if f:
+            print(f"\n{'='*84}\n  ESCALA x REAL\n{'='*84}")
+            for m in f:
+                print(f"  {m['nome'][:30]:<32} faltou: "
+                      + ", ".join(f"{h:02d}h" for h in m["faltou"]))
+    print()
+
+
+def render_html(payload, destino=DASHBOARD_HTML):
+    """Gera o HTML e só grava se mudou (atômico). Retorna (path, mudou:bool)."""
+    template = TEMPLATE_PATH.read_text(encoding="utf-8")
+    novo = template.replace("__DATA__", json.dumps(payload, ensure_ascii=False))
+
+    destino.parent.mkdir(parents=True, exist_ok=True)
+    if destino.exists():
+        atual = destino.read_text(encoding="utf-8")
+        if hashlib.sha256(atual.encode()).digest() == \
+           hashlib.sha256(novo.encode()).digest():
+            return destino, False
+
+    tmp = destino.with_suffix(".html.tmp")
+    tmp.write_text(novo, encoding="utf-8")
+    os.replace(tmp, destino)                        # troca atômica
+    return destino, True
+
+
+def gerar(con, dia=None):
+    """Monta o payload de todos os dias (ou de um) e escreve o HTML."""
+    from .escala import carregar_escala, escala_dia
+
+    esc = carregar_escala()
+    dias = [dia] if dia else [r[0] for r in con.execute(
+        "SELECT DISTINCT dia FROM coleta ORDER BY dia DESC LIMIT 30")]
+    pay = {"gerado_em": f"{agora():%d/%m/%Y %H:%M}", "dias": {}}
+    for d in dias:
+        res = analisar(con, d, escala_dia(esc, d) if esc else None)
+        if res:
+            pay["dias"][d] = res
+    if not pay["dias"]:
+        return None, None, False
+    primeiro = dias[0] if dias and dias[0] in pay["dias"] else next(iter(pay["dias"]))
+    imprimir(pay["dias"][primeiro])
+    path, mudou = render_html(pay)
+    return pay, path, mudou

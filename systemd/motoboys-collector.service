@@ -1,0 +1,15 @@
+[Unit]
+Description=Coletor de presenca de motoboys (Mais Delivery)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=%BASE%
+ExecStart=%BASE%/.venv/bin/python -m collector.collector --coletar
+Restart=always
+RestartSec=5
+# logs vao para o journald (journalctl --user -u motoboys-collector)
+
+[Install]
+WantedBy=default.target
