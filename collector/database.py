@@ -88,10 +88,11 @@ def gravar(con, ts, registros, frescor_min=FRESCOR_MIN, entregas=None):
                      float(lat) if lat else None, float(lon) if lon else None,
                      moveu, qt, sit, estado))
 
-        # fallback: extrai o pedido do texto se a lista dedicada não vier
-        if entregas is None:
-            for pid in RE_PEDIDO.findall(str(r.get("dsPedidos") or "")):
-                _reg_entrega(con, pid, mid, sit, None, iso)
+        # sempre extrai o #id do texto: a lista dedicada costuma vir PARCIAL
+        # (só alguns motoboys), e o dsPedidos é a única fonte para o resto.
+        # A lista 3 roda depois e sobrescreve com o dado melhor (ver _reg_entrega).
+        for pid in RE_PEDIDO.findall(str(r.get("dsPedidos") or "")):
+            _reg_entrega(con, pid, mid, sit, None, iso)
 
     # lista 3: entregas em curso (dsNome ali é o CLIENTE — não gravamos)
     for e in (entregas or []):
