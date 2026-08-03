@@ -37,18 +37,50 @@ color:#8b93a7;border-radius:999px;padding:6px 14px 6px 10px;cursor:pointer;font:
 .rot{color:#ffd43b;font-size:12px;min-height:18px}
 .lbl{background:rgba(255,255,255,.92);border-radius:4px;padding:1px 6px;font-size:11px;
 font-weight:600;color:#14171f;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+/* ── relatorio ────────────────────────────────────────────────────── */
+.btn{background:#2a3242;color:#e6e8ee;border:1px solid #3d4658;border-radius:6px;
+padding:6px 14px;font:inherit;cursor:pointer}.btn:hover{background:#333c4e}
+.bar-h{background:#4c6ef5;height:10px;border-radius:2px;min-width:2px;display:inline-block;
+vertical-align:middle}
+.tot td{font-weight:700;border-top:2px solid #2f3646;border-bottom:0}
+.cab{display:none}
+@media print{
+  /* o tema escuro imprime um retangulo preto e come tinta: vira papel branco */
+  @page{margin:14mm}
+  body{background:#fff;color:#000;padding:0;font-size:11pt}
+  .tabs,.bar,.chips,.rot,.btn,#app,#mapa,.noprint{display:none!important}
+  .cab{display:block;margin-bottom:10mm;border-bottom:2px solid #000;padding-bottom:4mm}
+  .cab h2{margin:0 0 2mm;font-size:15pt}.cab div{color:#444;font-size:9pt}
+  .card{background:#fff;border:0;border-radius:0;padding:0;margin:0 0 8mm;
+        break-inside:avoid}
+  h1,.s{display:none}
+  th{color:#000;border-bottom:1.5px solid #000;font-size:8pt}
+  td{border-bottom:1px solid #ddd}
+  .kp{border:1px solid #999;background:#fff}.kp b{color:#000}.kp span{color:#444}
+  .ok,.wr,.bad{color:#000}
+  .lg{color:#555}
+  /* sem isto o Chrome/Firefox descartam os fundos e a barra some do papel */
+  .bar-h{background:#333!important;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  table{break-inside:auto}tr{break-inside:avoid}thead{display:table-header-group}
+}
 </style></head><body>
 <h1>Presenca real de motoboys</h1><div class=s id=s></div>
 <div class=tabs role=tablist>
 <button class=tab id=t-presenca role=tab aria-selected=true>Presenca</button>
-<button class=tab id=t-mapa role=tab aria-selected=false>Mapa</button></div>
-<div class=bar><select id=sel></select><span class=lg id=ctx></span></div>
+<button class=tab id=t-mapa role=tab aria-selected=false>Mapa</button>
+<button class=tab id=t-rel role=tab aria-selected=false>Relatorio</button></div>
+<div class=bar id=barra><select id=sel></select><span class=lg id=ctx></span></div>
+<div class=bar id=barra-rel hidden>
+  <label class=lg for=de>de</label><select id=de></select>
+  <label class=lg for=ate>ate</label><select id=ate></select>
+  <button class=btn id=imprimir>Imprimir</button></div>
 <div id=app></div>
 <div id=mapa hidden>
   <div class=chips id=chips></div><div class=rot id=rot></div>
   <div class=card style=padding:8px><div id=map></div></div>
   <div id=mstats></div>
 </div>
+<div id=rel hidden></div>
 <script src=vendor/leaflet.js></script>
 <script>const P=__DATA__;
 function cor(v){if(v==null)return"#1c2029";if(v>=90)return"#2f9e44";if(v>=60)return"#66a80f";
@@ -185,20 +217,101 @@ Object.keys((r||{}).trajetos||{})
   .sort((a,b)=>r.trajetos[b].km-r.trajetos[a].km).slice(0,MAX).forEach(ocupar);
 chips();if(map&&!document.getElementById("mapa").hidden)abrirMapa();}
 
-function aba(nome){const ehMapa=nome==="mapa";
-document.getElementById("app").hidden=ehMapa;
-document.getElementById("mapa").hidden=!ehMapa;
-document.getElementById("t-presenca").setAttribute("aria-selected",!ehMapa);
-document.getElementById("t-mapa").setAttribute("aria-selected",ehMapa);
-document.getElementById("ctx").textContent=ehMapa
+/* ───────────────────────── ABA RELATORIO ────────────────────────────
+   Consolida o periodo escolhido a partir dos mesmos dias ja embutidos na
+   pagina — nenhuma consulta, nenhum servidor. */
+function agregar(de,ate){
+const dias=Object.keys(P.dias).filter(d=>d>=de&&d<=ate).sort();
+const por=new Map();let snaps=0,tent=0;
+dias.forEach(d=>{const r=P.dias[d];snaps+=r.snapshots;tent+=r.tentativas;
+  (r.motoboys||[]).forEach(m=>{
+    const a=por.get(m.id)||{id:m.id,nome:m.nome,horas:0,rodando:0,pedidos:0,km:0,dias:0};
+    a.nome=m.nome;a.horas+=m.horas;a.rodando+=m.h_rodando;a.pedidos+=m.pedidos;a.dias++;
+    const t=(r.trajetos||{})[m.id];if(t)a.km+=t.km;
+    por.set(m.id,a)})});
+const linhas=[...por.values()].sort((x,y)=>y.horas-x.horas);
+const tot=linhas.reduce((s,a)=>({horas:s.horas+a.horas,rodando:s.rodando+a.rodando,
+  pedidos:s.pedidos+a.pedidos,km:s.km+a.km}),{horas:0,rodando:0,pedidos:0,km:0});
+/* NAO ha metrica de ocupacao aqui, de proposito. O painel so lista o motoboy
+   enquanto ele tem pedido em maos (verificado: nenhum snapshot com
+   qt_pedidos=0 em 3286, e o motoboy some da lista nos intervalos ociosos),
+   entao "horas rodando" e "horas online" contam os MESMOS snapshots e a razao
+   entre elas da 100% sempre. Seria uma identidade matematica vestida de KPI.
+   Medir ociosidade exige outro nrOperacao do painel, que liste tambem quem
+   esta logado sem corrida. */
+linhas.forEach(a=>a.pedDia=a.dias?a.pedidos/a.dias:0);
+return{dias,linhas,tot,snaps,tent}}
+
+function relatorio(){const de=document.getElementById("de").value,
+ate=document.getElementById("ate").value,el=document.getElementById("rel");
+if(de>ate){el.innerHTML=`<div class=card>Periodo invalido: "de" e depois de "ate".</div>`;return}
+const g=agregar(de,ate);
+if(!g.dias.length){el.innerHTML="<div class=card>Sem dados no periodo.</div>";return}
+const per=g.dias.length===1?fmt(g.dias[0]):`${fmt(g.dias[0])} a ${fmt(g.dias[g.dias.length-1])}`;
+const cob=Math.round(g.snaps/Math.max(1,g.tent)*100);
+const maxr=Math.max(...g.linhas.map(a=>a.rodando),1);
+let h=`<div class=cab><h2>Relatorio de presenca — motoboys</h2>
+<div>Periodo: ${per} (${g.dias.length} dia${g.dias.length>1?"s":""}) &middot;
+gerado em ${P.gerado_em}</div></div>`;
+h+=`<div class=k>
+<div class=kp><b>${g.linhas.length}</b><span>motoboys no periodo</span></div>
+<div class=kp><b>${g.tot.horas.toFixed(0)}h</b><span>horas com pedido</span></div>
+<div class=kp><b>${g.tot.pedidos}</b><span>pedidos entregues</span></div>
+<div class=kp><b>${g.tot.km.toFixed(0)} km</b><span>distancia total</span></div>
+<div class=kp><b>${cob}%</b><span>cobertura do coletor</span></div></div>`;
+h+=`<div class=card><table><thead><tr><th>Motoboy</th><th>Dias</th><th>Horas com pedido</th>
+<th></th><th>Pedidos</th><th>Pedidos/dia</th><th>Distancia</th></tr></thead><tbody>`;
+g.linhas.forEach(a=>{h+=`<tr><td class=nm>${a.nome}</td><td>${a.dias}</td>
+<td>${a.horas.toFixed(1)}</td>
+<td style=width:110px><span class=bar-h style="width:${Math.round(a.horas/maxr*100)}px"></span></td>
+<td>${a.pedidos}</td><td>${a.pedDia.toFixed(1)}</td><td>${a.km.toFixed(1)} km</td></tr>`});
+h+=`<tr class=tot><td>TOTAL</td><td>${g.dias.length}</td><td>${g.tot.horas.toFixed(1)}</td>
+<td></td><td>${g.tot.pedidos}</td>
+<td>${g.dias.length?(g.tot.pedidos/g.dias.length).toFixed(1):"0"}</td>
+<td>${g.tot.km.toFixed(1)} km</td></tr></tbody></table>
+<div class=lg><b>Horas com pedido</b> conta o tempo em que o motoboy aparecia no painel
+com ao menos uma entrega em maos. O painel nao lista quem esta logado e ocioso, entao o
+tempo de espera por corrida <b>nao esta medido aqui</b> — estes numeros sao piso, nao
+jornada total. Distancia descarta deslocamentos abaixo de 60 m (GPS parado) e acima de
+5 km por intervalo de 3 min (buraco de coleta).</div></div>`;
+h+=`<div class=card><h3 style="margin:0 0 10px;font-size:14px">Por dia</h3>
+<table><thead><tr><th>Dia</th><th>Motoboys</th><th>Horas com pedido</th><th>Pedidos</th>
+<th>Distancia</th><th>Cobertura do coletor</th></tr></thead><tbody>`;
+g.dias.slice().reverse().forEach(d=>{const r=P.dias[d],
+  ho=r.motoboys.reduce((s,m)=>s+m.horas,0),pe=r.motoboys.reduce((s,m)=>s+m.pedidos,0),
+  qm=Object.values(r.trajetos||{}).reduce((s,t)=>s+t.km,0),
+  c=Math.round(r.snapshots/Math.max(1,r.tentativas)*100);
+h+=`<tr><td>${fmt(d)}</td><td>${r.motoboys.length}</td><td>${ho.toFixed(1)}</td>
+<td>${pe}</td><td>${qm.toFixed(1)} km</td>
+<td class="${c>=95?"ok":c>=80?"wr":"bad"}">${c}%</td></tr>`});
+h+=`</tbody></table><div class=lg>Cobertura = snapshots obtidos / tentativas de coleta.
+Abaixo de 100% houve falha de coleta, e as horas do dia estao subestimadas.</div></div>`;
+el.innerHTML=h}
+const fmt=d=>d.split("-").reverse().join("/");
+
+function aba(nome){
+const alvo={presenca:"app",mapa:"mapa",rel:"rel"};
+for(const[k,v]of Object.entries(alvo))document.getElementById(v).hidden=(k!==nome);
+for(const k of Object.keys(alvo))
+  document.getElementById("t-"+(k==="presenca"?"presenca":k)).setAttribute("aria-selected",k===nome);
+document.getElementById("barra").hidden=(nome==="rel");
+document.getElementById("barra-rel").hidden=(nome!=="rel");
+document.getElementById("ctx").textContent=nome==="mapa"
   ?"Trilhas do dia — ate 4 ao mesmo tempo":"";
-if(ehMapa)abrirMapa()}
+if(nome==="mapa")abrirMapa();
+if(nome==="rel")relatorio()}
 
 (function(){const ds=Object.keys(P.dias).sort().reverse();
 document.getElementById("s").textContent=`gerado ${P.gerado_em} - ${ds.length} dia(s)`;
 const s=document.getElementById("sel");
 s.innerHTML=ds.map(d=>`<option value="${d}">${d}</option>`).join("");
 s.onchange=()=>trocarDia(s.value);
+const asc=ds.slice().reverse(),op=asc.map(d=>`<option value="${d}">${fmt(d)}</option>`).join("");
+const de=document.getElementById("de"),ate=document.getElementById("ate");
+de.innerHTML=op;ate.innerHTML=op;de.value=asc[0];ate.value=asc[asc.length-1];
+de.onchange=ate.onchange=relatorio;
+document.getElementById("imprimir").onclick=()=>window.print();
 document.getElementById("t-presenca").onclick=()=>aba("presenca");
 document.getElementById("t-mapa").onclick=()=>aba("mapa");
+document.getElementById("t-rel").onclick=()=>aba("rel");
 trocarDia(ds[0])})();</script></body></html>
