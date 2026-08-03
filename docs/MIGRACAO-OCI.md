@@ -1,7 +1,7 @@
 # Migração para Oracle Cloud (Always Free)
 
 Runbook para tirar o coletor da máquina pessoal e pôr numa VM 24/7 sem custo
-recorrente. Executar na ordem — o passo 4 é um **portão** que decide se a
+recorrente. Executar na ordem — o passo 5 é um **portão** que decide se a
 migração é viável.
 
 ## Por que OCI
@@ -16,7 +16,7 @@ dura 6 meses e depois sai ~$9/mês.
 |---|---|---|
 | Região | **São Paulo (`sa-saopaulo-1`)** | IP brasileiro. **Escolher no cadastro** — é a *home region*, **irreversível**; recursos Always Free só existem nela. Vinhedo (`sa-vinhedo-1`) serve igual. |
 | Shape | **VM.Standard.A1.Flex**, 1 OCPU / 6 GB (ARM) | ¼ da cota free (4 OCPU / 24 GB). `requests` é pure-python, roda em aarch64 sem drama. |
-| Fallback | **VM.Standard.E2.1.Micro** (x86, 1 OCPU / 1 GB) | A capacidade de A1 vive esgotada (`Out of host capacity`). 1 GB sobra para 1 processo Python + SQLite. |
+| Fallback | **VM.Standard.E2.1.Micro** (x86, 1 OCPU / 1 GB) | A capacidade de A1 vive esgotada (`Out of host capacity`). 1 GB sobra para 1 processo Python + SQLite. **Foi o que sobrou na prática** (SP, 03/08/2026) — sem impacto: a única dependência é `requests`, e o coletor roda em ~3 MB de RSS. |
 | SO | **Ubuntu 24.04 LTS** | Python 3.12, systemd igual ao Arch, usuário `ubuntu`. |
 | Disco | Boot volume 50 GB (mínimo) | Dentro dos 200 GB free. |
 | Rede | **Não abrir porta nenhuma** | O projeto não expõe serviço; o dashboard é servido pelo Cloudflare. |
@@ -26,12 +26,12 @@ dura 6 meses e depois sai ~$9/mês.
 ```mermaid
 flowchart TD
     A[1. Conta OCI + VM Ubuntu 24.04<br/>São Paulo, A1.Flex ou E2.1.Micro] --> B[2. apt: python3-venv, git, sqlite3<br/>timezone America/Sao_Paulo]
-    B --> C[3. git clone HTTPS + venv + pip install requests]
-    C --> D[4. scp APENAS collector/config.json<br/>cookie recém-capturado]
+    B --> E[3. Chave SSH do servidor<br/>deploy key write + ssh-keyscan]
+    E --> C[4. git clone SSH + venv<br/>pip install requests + git config user.*]
+    C --> D[5. scp APENAS collector/config.json<br/>cookie recém-capturado]
     D --> G{{"PORTÃO<br/>collector.collector --testar"}}
     G -->|SESSAO_EXPIRADA| X[PARAR. Reavaliar:<br/>painel amarra sessão a IP/datacenter]
-    G -->|lista de entregadores OK| E[5. Chave SSH do servidor<br/>deploy key write + ssh-keyscan<br/>remote SSH + git config user.*]
-    E --> F[6. DESLIGAR pipeline local<br/>systemctl --user disable --now]
+    G -->|lista de entregadores OK| F[6. DESLIGAR pipeline local<br/>systemctl --user disable --now]
     F --> H[7. make backup local<br/>scp do tarball]
     H --> I[8. ./install.sh no servidor]
     I --> J[9. Verificação]
@@ -82,19 +82,47 @@ API `.backup` do CLI e cai num fallback Python funcional (`VACUUM INTO`,
 os logs do journald e o `date` da mensagem de commit (`deploy.sh:26`) com o
 `America/Sao_Paulo` que o `config.py:18` já usa internamente.
 
-## 3. Clonar e criar a venv
+## 3. Identidade do servidor no GitHub
+
+**Antes do clone**: o repo `dadosmotoboy` é privado, então `git clone` por HTTPS
+falha com `could not read Username for 'https://github.com'` — a VM não tem TTY
+para responder o prompt de credencial. A chave tem que existir primeiro. Ela
+serve às duas pontas: clonar agora e dar push do dashboard depois (`deploy.sh`).
 
 ```bash
-git clone https://github.com/PedroGodoy-44/dadosmotoboy.git ~/projetos/motoboys
-cd ~/projetos/motoboys
-python3 -m venv .venv && .venv/bin/pip install -q -r collector/requirements.txt
+ssh-keygen -t ed25519 -N "" -C "motoboys-server-oci" -f ~/.ssh/id_ed25519
+ssh-keyscan -t ed25519 github.com >> ~/.ssh/known_hosts     # NÃO PULAR
 ```
 
-HTTPS agora; o remote vira SSH no passo 5. A venv é criada à mão aqui só para
-habilitar o portão — o `install.sh` do passo 8 a reaproveita (só cria se não
-existir).
+O `ssh-keyscan` não é opcional: o `deploy.sh` roda pelo `motoboys-deploy.service`,
+sem TTY, e o primeiro push sem a host key conhecida falha com
+`Host key verification failed` sem chance de responder "yes".
 
-## 4. PORTÃO — testar a sessão do painel
+Cadastrar `~/.ssh/id_ed25519.pub` em GitHub → repo `dadosmotoboy` → Settings →
+Deploy keys, **com "Allow write access" marcado**. Precisa ser chave nova (não a
+do notebook): o GitHub não aceita a mesma pública como deploy key em dois lugares.
+
+Validar antes de seguir — deve responder com o nome do repo:
+
+```bash
+ssh -T git@github.com     # Hi PedroGodoy-44/dadosmotoboy! You've successfully authenticated...
+```
+
+## 4. Clonar e criar a venv
+
+```bash
+git clone git@github.com:PedroGodoy-44/dadosmotoboy.git ~/projetos/motoboys
+cd ~/projetos/motoboys
+python3 -m venv .venv && .venv/bin/pip install -q -r collector/requirements.txt
+git config user.name  "motoboys-server"
+git config user.email "pedrohenriquegoodoy@gmail.com"
+```
+
+Clonando por SSH o remote já nasce certo — nada de `git remote set-url` depois.
+A venv é criada à mão aqui só para habilitar o portão; o `install.sh` do passo 8
+a reaproveita (só cria se não existir).
+
+## 5. PORTÃO — testar a sessão do painel
 
 **Decide a migração inteira.** Capturar um cURL **novo** no Firefox local
 (F12 → Network → `ajax_operacao.php` → Copy as cURL) e importar antes de copiar;
@@ -113,27 +141,9 @@ Saída esperada: `HTTP 200 — N entregadores` e a tabela de nomes/estados. Se s
 IP ou bloqueia faixas de datacenter. Alternativas a considerar: proxy residencial,
 ou manter a coleta local e migrar só a publicação.
 
-## 5. Identidade do servidor no GitHub
-
-O `deploy.sh` dá push, então o servidor precisa de chave própria:
-
-```bash
-ssh-keygen -t ed25519 -N "" -f ~/.ssh/id_ed25519
-ssh-keyscan github.com >> ~/.ssh/known_hosts     # NÃO PULAR
-git remote set-url origin git@github.com:PedroGodoy-44/dadosmotoboy.git
-git config user.name  "motoboys-server"
-git config user.email "pedrohenriquegoodoy@gmail.com"
-```
-
-O `ssh-keyscan` não é opcional: o `deploy.sh` roda pelo `motoboys-deploy.service`,
-sem TTY, e o primeiro push sem a host key conhecida falha com
-`Host key verification failed` sem chance de responder "yes".
-
-Cadastrar `~/.ssh/id_ed25519.pub` em GitHub → repo `dadosmotoboy` → Settings →
-Deploy keys, **com "Allow write access" marcado**. Precisa ser chave nova (não a
-do notebook): o GitHub não aceita a mesma pública como deploy key em dois lugares.
-
-Validar antes de seguir: `ssh -T git@github.com` deve responder com o nome do repo.
+**Resultado real (03/08/2026):** passou — `HTTP 200 — 4 entregadores`, 4/4
+presentes, com o mesmo `PHPSESSID` capturado na máquina local. O painel Mais
+Delivery **não** amarra a sessão ao IP nem bloqueia faixa de datacenter da OCI.
 
 ## 6. Desligar o pipeline local
 
@@ -160,7 +170,7 @@ tar -xzf /tmp/motoboys-*.tar.gz -C ~/projetos/motoboys/collector/ && rm /tmp/mot
 ```
 
 O tarball contém `database.db`, `config.json` e `escala.csv` — nunca o `.env`.
-O `config.json` já foi no passo 4; o tar só sobrescreve com o mesmo conteúdo.
+O `config.json` já foi no passo 5; o tar só sobrescreve com o mesmo conteúdo.
 
 **O `.env` não precisa ser copiado**: nenhum código lê `CLOUDFLARE_API_TOKEN` ou
 `CF_PAGES_PROJECT` (o deploy é `git push` puro), e o `install.sh` cria um a partir
@@ -196,7 +206,7 @@ units com `%BASE%` substituído, liga o linger e sobe tudo. Sem sudo.
 
 **Renovar a sessão** (quando o log mostrar `SESSAO_EXPIRADA`), da máquina local:
 ```bash
-export MOTOBOYS_HOST=ubuntu@SEU_IP    # ponha no ~/.bashrc
+export MOTOBOYS_HOST=ubuntu@147.15.94.106    # ponha no ~/.bashrc
 make push-sessao CURL=curl.txt
 ```
 
