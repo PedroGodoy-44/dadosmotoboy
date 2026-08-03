@@ -173,6 +173,39 @@ corromper.
 
 ---
 
+## Alerta de falha de coleta
+
+Existem **dois** modos de falha e eles precisam de mecanismos diferentes:
+
+| Modo | O que é | Quem detecta |
+|------|---------|--------------|
+| **A** | Processo vivo, painel devolve erro em todo ciclo | `collector/alerta.py`, após `ALERTA_FALHAS` ciclos seguidos |
+| **B** | Não está coletando: processo morto, VM reclamada, rede caída | **Só o serviço externo** — código morto não alerta |
+
+O modo B é a razão de o ping de sucesso ir a **cada** ciclo e não só na mudança
+de estado: é a *ausência* do ping que carrega a informação. Foi o modo A que
+passou despercebido por 14h em 01–02/08/2026, custando o turno de sábado à noite.
+
+Configuração em `.env` (ver `.env.example`): crie um check gratuito em
+[healthchecks.io](https://healthchecks.io) e cole a Ping URL em `HEALTHCHECK_URL`.
+No painel deles, **Period = 3 min** e **Grace = 15 min** — o grace é o que tolera
+restart do systemd e blips de rede. O canal de aviso (e-mail, Telegram, WhatsApp)
+se escolhe lá.
+
+Com `HEALTHCHECK_URL` vazio o alerta vira no-op silencioso: loga o aviso uma vez
+e não interfere em nada. **Alerta nunca derruba coleta** — toda falha de rede do
+ping é engolida e logada, porque perder um ping é irrelevante perto de perder um
+snapshot.
+
+Verificar se está ligado:
+
+```bash
+journalctl --user -u motoboys-collector | grep -i alerta
+# "alerta desativado (HEALTHCHECK_URL vazio no .env)"  → não configurado
+```
+
+---
+
 ## Troubleshooting
 
 - **`SESSAO_EXPIRADA` no log** → recapture o cURL e `make import CURL=curl.txt`

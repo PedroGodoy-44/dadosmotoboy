@@ -18,6 +18,7 @@ import json
 import sys
 import time
 
+from . import alerta
 from . import report as report_mod
 from .config import (AMOSTRA_PATH, CONFIG_PATH, DB_PATH, FRESCOR_MIN, INTERVALO,
                      agora, carregar_env, get_logger)
@@ -82,6 +83,9 @@ def cmd_coletar(uma_vez=False):
     sozinho por falta de sessão (deixa o systemd manter vivo)."""
     con = db_init()
     log.info(f"coletor iniciado — db={DB_PATH}")
+    # Zerado a cada restart do systemd de propósito: quem cobre reinício em
+    # loop é o grace period do healthchecks, não este contador.
+    falhas = 0
     while True:
         cfg = carregar_config()
         if cfg is None:
@@ -96,16 +100,24 @@ def cmd_coletar(uma_vez=False):
         ts = agora().replace(microsecond=0)
         http, data, erro = fetch(cfg)
         if erro:
+            falhas += 1
             registrar_coleta(con, ts, http, None, None, erro)
-            log.warning(f"!! {erro}"
+            log.warning(f"!! {erro} ({falhas}x seguidas)"
                         + (" — recapture o cURL (--importar-curl)"
                            if erro == "SESSAO_EXPIRADA" else ""))
+            alerta.falha(erro, falhas)
         else:
             regs, entregas = classificar(data)
             n = gravar(con, ts, regs, int(cfg.get("frescor_min") or FRESCOR_MIN),
                        entregas=entregas)
             registrar_coleta(con, ts, http, len(regs), n, None)
-            log.info(f"{n} presentes de {len(regs)} cadastrados")
+            resumo = f"{n} presentes de {len(regs)} cadastrados"
+            log.info(resumo)
+            if falhas >= alerta.limiar():
+                alerta.recuperado(falhas, resumo)
+            else:
+                alerta.ok(resumo)
+            falhas = 0
 
         if uma_vez:
             return
