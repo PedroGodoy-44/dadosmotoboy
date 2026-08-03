@@ -1,6 +1,7 @@
 <!doctype html><html lang=pt-BR><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1">
-<title>Motoboys</title><style>
+<meta name=robots content="noindex,nofollow">
+<title>Motoboys</title><link rel=stylesheet href=vendor/leaflet.css><style>
 *{box-sizing:border-box}body{margin:0;background:#0f1115;color:#e6e8ee;
 font:14px/1.5 -apple-system,Segoe UI,Roboto,sans-serif;padding:24px}
 h1{font-size:20px;margin:0 0 4px}.s{color:#8b93a7;font-size:13px;margin-bottom:16px}
@@ -16,9 +17,40 @@ td{padding:6px 8px;border-bottom:1px solid #1c2029}
 .nm{white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis}
 .bad{color:#ff6b6b}.ok{color:#51cf66}.wr{color:#ffd43b}
 select{background:#171a21;color:#e6e8ee;border:1px solid #242835;border-radius:6px;padding:6px 10px}
-.lg{color:#5b6478;font-size:11px;margin-top:8px}</style></head><body>
+.lg{color:#5b6478;font-size:11px;margin-top:8px}
+/* ── abas ─────────────────────────────────────────────────────────── */
+.tabs{display:flex;gap:4px;margin:0 0 12px}
+.tab{background:none;border:0;border-bottom:2px solid transparent;color:#8b93a7;
+font:inherit;padding:8px 14px;cursor:pointer;border-radius:6px 6px 0 0}
+.tab:hover{color:#e6e8ee}.tab[aria-selected=true]{color:#fff;border-bottom-color:#4c6ef5}
+.bar{display:flex;gap:10px;align-items:center;flex-wrap:wrap;margin-bottom:12px}
+/* ── mapa ─────────────────────────────────────────────────────────── */
+#map{height:520px;border-radius:8px;background:#1c2029}
+.leaflet-container{font:inherit}
+.chips{display:flex;gap:8px;flex-wrap:wrap;margin-bottom:12px}
+.chip{display:flex;align-items:center;gap:8px;background:#12151b;border:1px solid #242835;
+color:#8b93a7;border-radius:999px;padding:6px 14px 6px 10px;cursor:pointer;font:inherit;font-size:13px}
+.chip:hover{border-color:#39414f}.chip[aria-pressed=true]{color:#fff;border-color:#4c5670}
+.sw{width:10px;height:10px;border-radius:50%;background:#39414f;flex:none}
+.chip[aria-pressed=true] .sw{box-shadow:0 0 0 3px rgba(255,255,255,.12)}
+.chip small{color:#5b6478}.chip[aria-pressed=true] small{color:#8b93a7}
+.rot{color:#ffd43b;font-size:12px;min-height:18px}
+.lbl{background:rgba(255,255,255,.92);border-radius:4px;padding:1px 6px;font-size:11px;
+font-weight:600;color:#14171f;white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.35)}
+</style></head><body>
 <h1>Presenca real de motoboys</h1><div class=s id=s></div>
-<select id=sel></select><div id=app></div><script>const P=__DATA__;
+<div class=tabs role=tablist>
+<button class=tab id=t-presenca role=tab aria-selected=true>Presenca</button>
+<button class=tab id=t-mapa role=tab aria-selected=false>Mapa</button></div>
+<div class=bar><select id=sel></select><span class=lg id=ctx></span></div>
+<div id=app></div>
+<div id=mapa hidden>
+  <div class=chips id=chips></div><div class=rot id=rot></div>
+  <div class=card style=padding:8px><div id=map></div></div>
+  <div id=mstats></div>
+</div>
+<script src=vendor/leaflet.js></script>
+<script>const P=__DATA__;
 function cor(v){if(v==null)return"#1c2029";if(v>=90)return"#2f9e44";if(v>=60)return"#66a80f";
 if(v>=30)return"#e8590c";if(v>0)return"#c92a2a";return"#1c2029"}
 function R(d){const r=P.dias[d],a=document.getElementById("app");
@@ -55,8 +87,118 @@ h+=`<tr><td style=width:50px>${String(i).padStart(2,"0")}h</td><td>
 <div style="background:#4c6ef5;height:14px;border-radius:3px;width:${Math.min(100,n*10)}%"></div></td>
 <td style=width:50px>${n.toFixed(1)}</td></tr>`}
 h+="</table></div>";a.innerHTML=h}
+
+/* ─────────────────────────── ABA MAPA ───────────────────────────────
+   Paleta validada com scripts/validate_palette.js no modo --pairs all
+   (num mapa TODAS as trilhas ficam visiveis juntas, entao qualquer par
+   precisa ser distinguivel — nao so os vizinhos de uma ordem fixa),
+   contra a superficie clara dos tiles do OSM (#f2efe9):
+     azul+laranja+aqua+violeta -> CVD dE 9.2 / visao normal 16.3  PASSA
+     qualquer 5a cor           -> visao normal 12.9               FALHA
+   Dai o teto de 4 trilhas simultaneas. Nao aumentar sem revalidar.
+   Laranja e aqua ficam abaixo de 3:1 contra o tile: a "relief rule" e
+   atendida pelo rotulo com o nome fixado no fim de cada trilha e pelo
+   contorno branco da linha, que tambem e pratica cartografica padrao. */
+const CORES=["#2a78d6","#eb6834","#1baf7a","#4a3aa7"],OUTRA="#6b7280",MAX=CORES.length;
+let map=null,camadas=[],diaAtual=null;
+const hhmm=m=>String(m/60|0).padStart(2,"0")+":"+String(m%60).padStart(2,"0");
+
+/* A frota passa de 4 (chega a 10 num dia), entao slot fixo por posicao
+   alfabetica deixaria a maioria em cinza. Em vez disso a cor gruda no
+   motoboy ENQUANTO ele estiver na tela e o slot so e liberado quando ele
+   sai. Isso preserva o que a regra "cor segue a entidade" protege: tirar
+   um colega do mapa nunca repinta os que ficaram. */
+const slots=new Map();                       // id -> indice de cor
+function ocupar(id){if(slots.has(id))return true;
+  const usados=new Set(slots.values());
+  for(let i=0;i<MAX;i++)if(!usados.has(i)){slots.set(id,i);return true}
+  return false}                              // sem slot livre = teto atingido
+function corDe(id){const i=slots.get(id);return i==null?OUTRA:CORES[i]}
+function idsDoDia(r){return Object.keys(r.trajetos||{})
+  .sort((a,b)=>(r.trajetos[a].nome||"").localeCompare(r.trajetos[b].nome||""))}
+
+function desenhar(){const r=P.dias[diaAtual];
+camadas.forEach(c=>map.removeLayer(c));camadas=[];
+const rot=document.getElementById("rot"),st=document.getElementById("mstats");
+if(!r||!r.trajetos||!Object.keys(r.trajetos).length){
+  rot.textContent="Sem posicoes registradas neste dia.";st.innerHTML="";return}
+rot.textContent=slots.size>=MAX?`Maximo de ${MAX} trilhas ao mesmo tempo — desmarque uma para trocar.`:"";
+const caixa=[];
+idsDoDia(r).filter(id=>slots.has(id)).forEach(id=>{
+  const t=r.trajetos[id],pts=t.pontos.map(p=>[p[1],p[2]]);
+  if(!pts.length)return;
+  caixa.push(...pts);
+  const c=corDe(id);
+  /* contorno branco por baixo: separa a trilha do tile e das outras trilhas */
+  camadas.push(L.polyline(pts,{color:"#fff",weight:6,opacity:.85}).addTo(map));
+  const ln=L.polyline(pts,{color:c,weight:3,opacity:.95}).addTo(map);
+  ln.bindTooltip(`${t.nome} — ${t.km.toFixed(1)} km`,{sticky:true});
+  camadas.push(ln);
+  const ini=t.pontos[0],fim=t.pontos[t.pontos.length-1];
+  camadas.push(L.circleMarker([ini[1],ini[2]],{radius:5,color:"#fff",weight:2,
+    fillColor:c,fillOpacity:1}).bindTooltip(`${t.nome} — inicio ${hhmm(ini[0])}`).addTo(map));
+  camadas.push(L.circleMarker([fim[1],fim[2]],{radius:8,color:"#fff",weight:3,
+    fillColor:c,fillOpacity:1}).bindTooltip(`${t.nome} — ultimo ${hhmm(fim[0])}`).addTo(map));
+  /* rotulo direto: identidade nunca depende so da cor */
+  camadas.push(L.marker([fim[1],fim[2]],{icon:L.divIcon({className:"",
+    html:`<span class=lbl>${t.nome.split(" ")[0]}</span>`,iconAnchor:[-10,8]})}).addTo(map));
+});
+if(caixa.length)map.fitBounds(L.latLngBounds(caixa).pad(.15));
+const linhas=idsDoDia(r).filter(id=>slots.has(id)).map(id=>{const t=r.trajetos[id],
+  m=(r.motoboys||[]).find(x=>x.id===id)||{};
+  return `<tr><td><span class=sw style="display:inline-block;background:${corDe(id)}"></span></td>
+  <td class=nm>${t.nome}</td><td>${t.km.toFixed(1)} km</td>
+  <td>${m.h_rodando!=null?m.h_rodando.toFixed(1)+" h":"-"}</td>
+  <td>${hhmm(t.pontos[0][0])}&rarr;${hhmm(t.pontos[t.pontos.length-1][0])}</td>
+  <td>${t.pontos.length}</td></tr>`}).join("");
+/* a mesma informacao em tabela: exigido pela regra de contraste e serve de
+   fallback para impressao, onde a trilha colorida se perde */
+st.innerHTML=linhas?`<div class=card><table><tr><th></th><th>Motoboy</th><th>Distancia</th>
+<th>Rodando</th><th>Periodo</th><th>Pontos</th></tr>${linhas}</table>
+<div class=lg>Distancia soma deslocamentos entre 60 m e 5 km por intervalo de 3 min —
+abaixo disso e tremido de GPS parado, acima e buraco de coleta.</div></div>`:"";}
+
+function chips(){const r=P.dias[diaAtual],el=document.getElementById("chips");
+if(!r||!r.trajetos){el.innerHTML="";return}
+el.innerHTML=idsDoDia(r).map(id=>{const t=r.trajetos[id],on=slots.has(id);
+return `<button class=chip data-id="${id}" aria-pressed="${on}">
+<span class=sw style="background:${on?corDe(id):"#39414f"}"></span>
+${t.nome}<small>${t.km.toFixed(1)} km</small></button>`}).join("");
+el.querySelectorAll(".chip").forEach(b=>b.onclick=()=>{const id=b.dataset.id;
+  if(slots.has(id))slots.delete(id);
+  else if(!ocupar(id)){document.getElementById("rot").textContent=
+    `Maximo de ${MAX} trilhas ao mesmo tempo — desmarque uma para trocar.`;return}
+  chips();desenhar()})}
+
+function abrirMapa(){if(!map){map=L.map("map",{scrollWheelZoom:false});
+L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",{maxZoom:19,
+  attribution:'&copy; <a href="https://openstreetmap.org/copyright">OpenStreetMap</a>'}).addTo(map);
+map.setView([-21.37,-46.52],13)}
+/* o container ficou com altura 0 enquanto a aba estava escondida */
+setTimeout(()=>map.invalidateSize(),0);desenhar()}
+
+function trocarDia(d){diaAtual=d;R(d);
+const r=P.dias[d];slots.clear();
+/* padrao = os que mais rodaram no dia; num dia de 10 motoboys eles sao a
+   resposta mais provavel de quem abre o mapa */
+Object.keys((r||{}).trajetos||{})
+  .sort((a,b)=>r.trajetos[b].km-r.trajetos[a].km).slice(0,MAX).forEach(ocupar);
+chips();if(map&&!document.getElementById("mapa").hidden)abrirMapa();}
+
+function aba(nome){const ehMapa=nome==="mapa";
+document.getElementById("app").hidden=ehMapa;
+document.getElementById("mapa").hidden=!ehMapa;
+document.getElementById("t-presenca").setAttribute("aria-selected",!ehMapa);
+document.getElementById("t-mapa").setAttribute("aria-selected",ehMapa);
+document.getElementById("ctx").textContent=ehMapa
+  ?"Trilhas do dia — ate 4 ao mesmo tempo":"";
+if(ehMapa)abrirMapa()}
+
 (function(){const ds=Object.keys(P.dias).sort().reverse();
 document.getElementById("s").textContent=`gerado ${P.gerado_em} - ${ds.length} dia(s)`;
 const s=document.getElementById("sel");
 s.innerHTML=ds.map(d=>`<option value="${d}">${d}</option>`).join("");
-s.onchange=()=>R(s.value);R(ds[0])})();</script></body></html>
+s.onchange=()=>trocarDia(s.value);
+document.getElementById("t-presenca").onclick=()=>aba("presenca");
+document.getElementById("t-mapa").onclick=()=>aba("mapa");
+trocarDia(ds[0])})();</script></body></html>

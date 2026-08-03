@@ -13,8 +13,15 @@ import json
 import os
 from collections import defaultdict
 
-from .config import DASHBOARD_HTML, JANELA, PICO, TEMPLATE_PATH, agora
+from .config import (DASHBOARD_HTML, JANELA, MOVIMENTO_M, PICO, TEMPLATE_PATH,
+                     agora)
 from .database import gravar_resumo
+
+# Teto de sanidade do deslocamento entre dois snapshots (3 min). Acima disto não
+# é moto, é buraco de coleta: `moveu_m` compara com o snapshot ANTERIOR seja ele
+# de 3 min ou de 14h atrás (database.py:77-79), então uma queda longa viraria uma
+# perna reta de dezenas de km atravessando a cidade.
+SALTO_MAX_M = 5000
 
 
 def analisar(con, dia, escala=None, pico=PICO, janela=JANELA):
@@ -102,6 +109,39 @@ def analisar(con, dia, escala=None, pico=PICO, janela=JANELA):
             "online_hora": onl, "motoboys": linhas, "tem_escala": bool(escala)}
 
 
+def trajetos(con, dia, janela=JANELA):
+    """Pontos de deslocamento do dia, por motoboy, para a aba Mapa.
+
+    Formato deliberadamente compacto: o HTML é estático e embute 30 dias disto,
+    então cada ponto é um array `[minuto_do_dia, lat, lon]` em vez de um objeto
+    com chaves repetidas — economiza ~60% do JSON.
+
+    Só entram snapshots com `presente=1`: quando o motoboy está ausente a
+    posição é a última conhecida, repetida, e ligá-la no traçado inventaria uma
+    parada longa onde ele só sumiu do painel.
+    """
+    lo, hi = janela
+    cur = con.execute("""SELECT id_entregador, COALESCE(nome,id_entregador),
+                                ts, lat, lon, moveu_m
+                         FROM snapshot
+                         WHERE dia=? AND presente=1
+                           AND lat IS NOT NULL AND lon IS NOT NULL
+                           AND hora BETWEEN ? AND ?
+                         ORDER BY id_entregador, ts""", (dia, lo, hi))
+    out = {}
+    for mid, nome, ts, lat, lon, moveu in cur.fetchall():
+        t = out.setdefault(mid, {"nome": nome, "pontos": [], "km": 0.0})
+        t["pontos"].append([int(ts[11:13]) * 60 + int(ts[14:16]),
+                            round(lat, 5), round(lon, 5)])
+        # Abaixo de MOVIMENTO_M é tremido de GPS parado; acima de SALTO_MAX_M é
+        # buraco de coleta. Nenhum dos dois é quilômetro rodado de verdade.
+        if moveu and MOVIMENTO_M <= moveu < SALTO_MAX_M:
+            t["km"] += moveu / 1000.0
+    for t in out.values():
+        t["km"] = round(t["km"], 1)
+    return out
+
+
 def imprimir(r):
     if not r:
         return print("Sem dados.")
@@ -168,6 +208,7 @@ def gerar(con, dia=None):
     for d in dias:
         res = analisar(con, d, escala_dia(esc, d) if esc else None)
         if res:
+            res["trajetos"] = trajetos(con, d)
             pay["dias"][d] = res
             gravar_resumo(con, d, res["motoboys"])
     if not pay["dias"]:
