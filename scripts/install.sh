@@ -37,8 +37,9 @@ if command -v npm >/dev/null 2>&1; then
   echo "==> npm encontrado — instalando wrangler local em cloudflare/ ..."
   ( cd "$BASE/cloudflare" && npm install --silent ) || echo "   (falha no npm install — resolva depois)"
 else
-  echo "!!  Node/npm ausentes. O deploy no Cloudflare fica INATIVO."
-  echo "    Instale com:  sudo pacman -S nodejs npm   (fora do Claude Code)"
+  echo "==> Node/npm ausentes — normal e inofensivo."
+  echo "    O deploy em uso e via git push (o Cloudflare Pages publica no push)"
+  echo "    e NAO precisa de Node. O npm so serve para o wrangler local, opcional."
 fi
 
 # 5) systemd (user) ------------------------------------------------------------

@@ -31,12 +31,13 @@ habilita as units systemd de usuário, liga o *linger* (sobrevive a logout) e
 inicia o coletor. **Nunca usa sudo.**
 
 ### Pré-requisitos
-- Python 3.11+ (testado em 3.14) — já presente.
-- **Node.js + npm** *(só para o deploy no Cloudflare)*:
-  ```bash
-  sudo pacman -S nodejs npm      # rode você mesmo; o install.sh não usa sudo
-  ```
-  Sem Node, todo o resto funciona; só o deploy fica inativo.
+- Python 3.11+ (testado em 3.12 e 3.14).
+- **Node.js não é necessário.** O deploy é via `git push` (o Cloudflare Pages
+  publica sozinho a cada push). O npm só serve para o caminho opcional do
+  wrangler local — o aviso do `install.sh` sobre npm ausente é inofensivo.
+
+> Rodando num servidor? Veja [docs/MIGRACAO-OCI.md](docs/MIGRACAO-OCI.md) — runbook
+> de migração para uma VM Oracle Cloud Always Free (grátis, região São Paulo).
 
 ---
 
@@ -56,6 +57,13 @@ avisa no log e não quebra). Para alimentá-lo:
 4. O coletor passa a gravar snapshots sozinho no próximo ciclo (a cada 3 min).
 
 Quando a sessão expirar, o log mostra `SESSAO_EXPIRADA` — repita os passos 1–3.
+
+**Se o coletor roda num servidor remoto**, os passos 2–3 viram um comando só, da
+sua máquina local:
+```bash
+export MOTOBOYS_HOST=ubuntu@SEU_IP    # ponha no ~/.bashrc
+make push-sessao CURL=curl.txt        # scp + import + test no servidor
+```
 
 ---
 
@@ -167,10 +175,19 @@ corromper.
 
 ## Troubleshooting
 
-- **`SESSAO_EXPIRADA` no log** → recapture o cURL e `make import CURL=curl.txt`.
+- **`SESSAO_EXPIRADA` no log** → recapture o cURL e `make import CURL=curl.txt`
+  (ou `make push-sessao CURL=curl.txt` se o coletor está num servidor).
 - **`sem config.json` no log** → o coletor está esperando; faça a importação do cURL.
-- **Deploy não roda** → falta Node/wrangler (`sudo pacman -S nodejs npm` +
-  `cd cloudflare && npm install`) ou faltam tokens no `.env`.
+- **Deploy não roda** → é `git push`, não precisa de Node nem de token. Verifique,
+  nessa ordem: `ssh -T git@github.com` responde? a chave está cadastrada em Deploy
+  keys **com write access**? `github.com` está no `~/.ssh/known_hosts` (sem isso o
+  push pelo systemd falha sem TTY)?
+  Log: `journalctl --user -u motoboys-deploy -n 50`.
+- **`Dashboard conflitou com o origin E ha trabalho local fora do HTML`** → o
+  `deploy.sh` resolve divergência do `index.html` sozinho (rebase e, se conflitar,
+  reconstrói o commit sobre o `origin`), mas se recusa a descartar commit ou
+  alteração sua em qualquer outro arquivo. Publique ou guarde esse trabalho
+  (`git pull --rebase`) e o deploy volta no ciclo seguinte. Nada foi perdido.
 - **Serviço não sobe no boot** → confira `loginctl show-user $USER -p Linger`
   (deve ser `Linger=yes`) e `systemctl --user is-enabled motoboys-collector`.
 - **Fuso horário** → o código usa `America/Sao_Paulo`; `Brazil/East` é equivalente.
