@@ -13,7 +13,6 @@ table{width:100%;border-collapse:collapse;font-size:13px}
 th{text-align:left;color:#8b93a7;font-weight:500;padding:6px 8px;font-size:11px;
 text-transform:uppercase;border-bottom:1px solid #242835}
 td{padding:6px 8px;border-bottom:1px solid #1c2029}
-.g{display:flex;gap:2px}.c{width:14px;height:20px;border-radius:2px}
 .nm{white-space:nowrap;max-width:190px;overflow:hidden;text-overflow:ellipsis}
 .bad{color:#ff6b6b}.ok{color:#51cf66}.wr{color:#ffd43b}
 select{background:#171a21;color:#e6e8ee;border:1px solid #242835;border-radius:6px;padding:6px 10px}
@@ -83,35 +82,35 @@ vertical-align:middle}
 <div id=rel hidden></div>
 <script src=vendor/leaflet.js></script>
 <script>const P=__DATA__;
-function cor(v){if(v==null)return"#1c2029";if(v>=90)return"#2f9e44";if(v>=60)return"#66a80f";
-if(v>=30)return"#e8590c";if(v>0)return"#c92a2a";return"#1c2029"}
 function R(d){const r=P.dias[d],a=document.getElementById("app");
 if(!r){a.innerHTML="<div class=card>Sem dados.</div>";return}
 /* Sem "ocupacao" e sem "horas rodando" separadas de "horas online": o painel
    so lista quem tem pedido em maos, entao as duas contam os mesmos snapshots
    e a razao seria 100% por construcao. Ver o comentario em agregar(). */
-const th=r.motoboys.reduce((s,m)=>s+m.horas,0),
-tp=r.motoboys.reduce((s,m)=>s+m.pedidos,0),
+const tp=r.motoboys.reduce((s,m)=>s+m.pedidos,0),
 tk=Object.values(r.trajetos||{}).reduce((s,t)=>s+t.km,0);
 let h=`<div class=k>
 <div class=kp><b>${r.motoboys.length}</b><span>motoboys</span></div>
-<div class=kp><b>${th.toFixed(1)}h</b><span>horas com pedido</span></div>
 <div class=kp><b>${tp}</b><span>pedidos</span></div>
 <div class=kp><b>${tk.toFixed(0)} km</b><span>distancia</span></div>
 <div class=kp><b>${Math.round(r.snapshots/Math.max(1,r.tentativas)*100)}%</b><span>cobertura coletor</span></div></div>`;
-h+=`<div class=card><table><tr><th>Motoboy</th><th>Presenca 08h&rarr;23h</th><th>Turno</th>
+h+=`<div class=card><table><tr><th>Motoboy</th><th>Tempo medio</th><th>Turno</th>
 <th>Horas c/ pedido</th><th>Ped</th><th>Distancia</th>${r.tem_escala?"<th>Aderencia</th>":""}</tr>`;
-r.motoboys.forEach(m=>{let g="<div class=g>";
-for(let i=8;i<=23;i++){const v=r.cobertura[i]>0?m.grid[i]:null;
-g+=`<div class=c style="background:${cor(v)}" title="${i}h: ${v==null?"sem coleta":v+"%"}"></div>`}
-g+="</div>";let ad="";if(r.tem_escala){const v=m.aderencia;
+r.motoboys.forEach(m=>{
+/* soma/contagem vem do report.py; a divisao acontece aqui, na ponta */
+const tm=m.ped_medidos?m.min_soma/m.ped_medidos:null;
+let ad="";if(r.tem_escala){const v=m.aderencia;
 ad=`<td class="${v==null?"":v>=90?"ok":v>=60?"wr":"bad"}">${v==null?"-":v+"%"}</td>`}
 const tn=m.inicio&&m.fim?`${m.inicio}&rarr;${m.fim}`:"-";
 const km=(r.trajetos||{})[m.id];
-h+=`<tr><td class=nm>${m.nome}</td><td>${g}</td><td>${tn}</td><td>${m.horas.toFixed(1)}</td>
+h+=`<tr><td class=nm>${m.nome}</td>
+<td title="${m.ped_medidos} de ${m.pedidos} pedidos com tempo medido">${tm==null?"-":tm.toFixed(0)+" min"}</td>
+<td>${tn}</td><td>${m.horas.toFixed(1)}</td>
 <td>${m.pedidos}</td><td>${km?km.km.toFixed(1)+" km":"-"}</td>${ad}</tr>`});
-h+=`</table><div class=lg>Verde = presente quase toda a hora - vermelho = presenca baixa -
-cinza = sem coleta. <b>Horas c/ pedido</b> conta o tempo com ao menos uma entrega em maos:
+h+=`</table><div class=lg><b>Tempo medio</b> = minutos por entrega, do momento em que o
+pedido saiu ate a ultima vez que o painel o mostrou. So conta pedido que veio com o tempo
+do painel — passe o mouse na celula para ver quantos dos pedidos do dia entraram na conta;
+"-" significa nenhum. <b>Horas c/ pedido</b> conta o tempo com ao menos uma entrega em maos:
 o painel nao lista quem esta logado e ocioso, entao a espera por corrida nao entra aqui.</div></div>`;
 const f=r.motoboys.filter(m=>m.faltou&&m.faltou.length);
 if(f.length){h+=`<div class=card><h3 style="margin:0 0 10px;font-size:14px">Escala x real</h3>
@@ -160,18 +159,26 @@ camadas.forEach(c=>map.removeLayer(c));camadas=[];
 const rot=document.getElementById("rot"),st=document.getElementById("mstats");
 if(!r||!r.trajetos||!Object.keys(r.trajetos).length){
   rot.textContent="Sem posicoes registradas neste dia.";st.innerHTML="";return}
-rot.textContent=slots.size>=MAX?`Maximo de ${MAX} trilhas ao mesmo tempo — desmarque uma para trocar.`:"";
+/* A trilha so e desenhada com UM motoboy selecionado: 4 tracados sobrepostos
+   viravam um emaranhado onde nao dava para seguir o percurso de ninguem. Com
+   2 ou mais ficam so os pontos de inicio/fim, que continuam comparaveis. */
+const sel=idsDoDia(r).filter(id=>slots.has(id));
+rot.textContent=sel.length>1
+  ?"Trilha aparece com um motoboy selecionado — com 2 ou mais ficam so inicio e fim."
+  :(slots.size>=MAX?`Maximo de ${MAX} ao mesmo tempo — desmarque um para trocar.`:"");
 const caixa=[];
-idsDoDia(r).filter(id=>slots.has(id)).forEach(id=>{
+sel.forEach(id=>{
   const t=r.trajetos[id],pts=t.pontos.map(p=>[p[1],p[2]]);
   if(!pts.length)return;
   caixa.push(...pts);
   const c=corDe(id);
-  /* contorno branco por baixo: separa a trilha do tile e das outras trilhas */
-  camadas.push(L.polyline(pts,{color:"#fff",weight:6,opacity:.85}).addTo(map));
-  const ln=L.polyline(pts,{color:c,weight:3,opacity:.95}).addTo(map);
-  ln.bindTooltip(`${t.nome} — ${t.km.toFixed(1)} km`,{sticky:true});
-  camadas.push(ln);
+  if(sel.length===1){
+    /* contorno branco por baixo: separa a trilha do tile e das outras trilhas */
+    camadas.push(L.polyline(pts,{color:"#fff",weight:6,opacity:.85}).addTo(map));
+    const ln=L.polyline(pts,{color:c,weight:3,opacity:.95}).addTo(map);
+    ln.bindTooltip(`${t.nome} — ${t.km.toFixed(1)} km`,{sticky:true});
+    camadas.push(ln);
+  }
   const ini=t.pontos[0],fim=t.pontos[t.pontos.length-1];
   camadas.push(L.circleMarker([ini[1],ini[2]],{radius:5,color:"#fff",weight:2,
     fillColor:c,fillOpacity:1}).bindTooltip(`${t.nome} — inicio ${hhmm(ini[0])}`).addTo(map));
@@ -182,7 +189,7 @@ idsDoDia(r).filter(id=>slots.has(id)).forEach(id=>{
     html:`<span class=lbl>${t.nome.split(" ")[0]}</span>`,iconAnchor:[-10,8]})}).addTo(map));
 });
 if(caixa.length)map.fitBounds(L.latLngBounds(caixa).pad(.15));
-const linhas=idsDoDia(r).filter(id=>slots.has(id)).map(id=>{const t=r.trajetos[id],
+const linhas=sel.map(id=>{const t=r.trajetos[id],
   m=(r.motoboys||[]).find(x=>x.id===id)||{};
   return `<tr><td><span class=sw style="display:inline-block;background:${corDe(id)}"></span></td>
   <td class=nm>${t.nome}</td><td>${t.km.toFixed(1)} km</td>
@@ -205,7 +212,7 @@ ${t.nome}<small>${t.km.toFixed(1)} km</small></button>`}).join("");
 el.querySelectorAll(".chip").forEach(b=>b.onclick=()=>{const id=b.dataset.id;
   if(slots.has(id))slots.delete(id);
   else if(!ocupar(id)){document.getElementById("rot").textContent=
-    `Maximo de ${MAX} trilhas ao mesmo tempo — desmarque uma para trocar.`;return}
+    `Maximo de ${MAX} ao mesmo tempo — desmarque um para trocar.`;return}
   chips();desenhar()})}
 
 function abrirMapa(){if(!map){map=L.map("map",{scrollWheelZoom:false});
@@ -217,10 +224,10 @@ setTimeout(()=>map.invalidateSize(),0);desenhar()}
 
 function trocarDia(d){diaAtual=d;R(d);
 const r=P.dias[d];slots.clear();
-/* padrao = os que mais rodaram no dia; num dia de 10 motoboys eles sao a
-   resposta mais provavel de quem abre o mapa */
+/* padrao = so o que mais rodou no dia. Marcar 4 de saida deixaria o mapa sem
+   trilha nenhuma (a trilha exige selecao unica); com 1, ele ja abre desenhado. */
 Object.keys((r||{}).trajetos||{})
-  .sort((a,b)=>r.trajetos[b].km-r.trajetos[a].km).slice(0,MAX).forEach(ocupar);
+  .sort((a,b)=>r.trajetos[b].km-r.trajetos[a].km).slice(0,1).forEach(ocupar);
 chips();if(map&&!document.getElementById("mapa").hidden)abrirMapa();}
 
 /* ───────────────────────── ABA RELATORIO ────────────────────────────
@@ -231,13 +238,19 @@ const dias=Object.keys(P.dias).filter(d=>d>=de&&d<=ate).sort();
 const por=new Map();let snaps=0,tent=0;
 dias.forEach(d=>{const r=P.dias[d];snaps+=r.snapshots;tent+=r.tentativas;
   (r.motoboys||[]).forEach(m=>{
-    const a=por.get(m.id)||{id:m.id,nome:m.nome,horas:0,rodando:0,pedidos:0,km:0,dias:0};
+    const a=por.get(m.id)||{id:m.id,nome:m.nome,horas:0,rodando:0,pedidos:0,km:0,dias:0,
+      min_soma:0,ped_medidos:0};
     a.nome=m.nome;a.horas+=m.horas;a.rodando+=m.h_rodando;a.pedidos+=m.pedidos;a.dias++;
+    /* soma-se o acumulado bruto, nunca a media do dia: dias com 1 e com 10
+       pedidos nao pesam igual, e media de medias entregaria o numero errado. */
+    a.min_soma+=m.min_soma;a.ped_medidos+=m.ped_medidos;
     const t=(r.trajetos||{})[m.id];if(t)a.km+=t.km;
     por.set(m.id,a)})});
 const linhas=[...por.values()].sort((x,y)=>y.horas-x.horas);
 const tot=linhas.reduce((s,a)=>({horas:s.horas+a.horas,rodando:s.rodando+a.rodando,
-  pedidos:s.pedidos+a.pedidos,km:s.km+a.km}),{horas:0,rodando:0,pedidos:0,km:0});
+  pedidos:s.pedidos+a.pedidos,km:s.km+a.km,
+  min_soma:s.min_soma+a.min_soma,ped_medidos:s.ped_medidos+a.ped_medidos}),
+  {horas:0,rodando:0,pedidos:0,km:0,min_soma:0,ped_medidos:0});
 /* NAO ha metrica de ocupacao aqui, de proposito. O painel so lista o motoboy
    enquanto ele tem pedido em maos (verificado: nenhum snapshot com
    qt_pedidos=0 em 3286, e o motoboy some da lista nos intervalos ociosos),
@@ -245,7 +258,8 @@ const tot=linhas.reduce((s,a)=>({horas:s.horas+a.horas,rodando:s.rodando+a.rodan
    entre elas da 100% sempre. Seria uma identidade matematica vestida de KPI.
    Medir ociosidade exige outro nrOperacao do painel, que liste tambem quem
    esta logado sem corrida. */
-linhas.forEach(a=>a.pedDia=a.dias?a.pedidos/a.dias:0);
+linhas.forEach(a=>{a.pedDia=a.dias?a.pedidos/a.dias:0;
+  a.minMedio=a.ped_medidos?a.min_soma/a.ped_medidos:null});
 return{dias,linhas,tot,snaps,tent}}
 
 function relatorio(){const de=document.getElementById("de").value,
@@ -266,19 +280,25 @@ h+=`<div class=k>
 <div class=kp><b>${g.tot.km.toFixed(0)} km</b><span>distancia total</span></div>
 <div class=kp><b>${cob}%</b><span>cobertura do coletor</span></div></div>`;
 h+=`<div class=card><table><thead><tr><th>Motoboy</th><th>Dias</th><th>Horas com pedido</th>
-<th></th><th>Pedidos</th><th>Pedidos/dia</th><th>Distancia</th></tr></thead><tbody>`;
+<th></th><th>Pedidos</th><th>Pedidos/dia</th><th>Tempo medio</th><th>Distancia</th></tr></thead><tbody>`;
 g.linhas.forEach(a=>{h+=`<tr><td class=nm>${a.nome}</td><td>${a.dias}</td>
 <td>${a.horas.toFixed(1)}</td>
 <td style=width:110px><span class=bar-h style="width:${Math.round(a.horas/maxr*100)}px"></span></td>
-<td>${a.pedidos}</td><td>${a.pedDia.toFixed(1)}</td><td>${a.km.toFixed(1)} km</td></tr>`});
+<td>${a.pedidos}</td><td>${a.pedDia.toFixed(1)}</td>
+<td title="${a.ped_medidos} de ${a.pedidos} pedidos com tempo medido">${a.minMedio==null?"-":a.minMedio.toFixed(0)+" min"}</td>
+<td>${a.km.toFixed(1)} km</td></tr>`});
 h+=`<tr class=tot><td>TOTAL</td><td>${g.dias.length}</td><td>${g.tot.horas.toFixed(1)}</td>
 <td></td><td>${g.tot.pedidos}</td>
 <td>${g.dias.length?(g.tot.pedidos/g.dias.length).toFixed(1):"0"}</td>
+<td>${g.tot.ped_medidos?(g.tot.min_soma/g.tot.ped_medidos).toFixed(0)+" min":"-"}</td>
 <td>${g.tot.km.toFixed(1)} km</td></tr></tbody></table>
 <div class=lg><b>Horas com pedido</b> conta o tempo em que o motoboy aparecia no painel
 com ao menos uma entrega em maos. O painel nao lista quem esta logado e ocioso, entao o
 tempo de espera por corrida <b>nao esta medido aqui</b> — estes numeros sao piso, nao
-jornada total. Distancia descarta deslocamentos abaixo de 60 m (GPS parado) e acima de
+jornada total. <b>Tempo medio</b> sai apenas dos pedidos em que o painel informou o tempo
+decorrido; o restante fica de fora da conta, entao a coluna cobre so parte dos pedidos —
+a celula mostra quantos entraram. O TOTAL e a media ponderada pelos pedidos medidos, nao a
+media da coluna. Distancia descarta deslocamentos abaixo de 60 m (GPS parado) e acima de
 5 km por intervalo de 3 min (buraco de coleta).</div></div>`;
 h+=`<div class=card><h3 style="margin:0 0 10px;font-size:14px">Por dia</h3>
 <table><thead><tr><th>Dia</th><th>Motoboys</th><th>Horas com pedido</th><th>Pedidos</th>
@@ -303,7 +323,7 @@ for(const k of Object.keys(alvo))
 document.getElementById("barra").hidden=(nome==="rel");
 document.getElementById("barra-rel").hidden=(nome!=="rel");
 document.getElementById("ctx").textContent=nome==="mapa"
-  ?"Trilhas do dia — ate 4 ao mesmo tempo":"";
+  ?"Trilha do dia — selecione um motoboy para ver o percurso":"";
 if(nome==="mapa")abrirMapa();
 if(nome==="rel")relatorio()}
 

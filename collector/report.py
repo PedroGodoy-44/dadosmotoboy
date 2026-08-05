@@ -60,6 +60,20 @@ def analisar(con, dia, escala=None, pico=PICO, janela=JANELA):
                        WHERE id_entregador=? AND substr(primeiro_visto,1,10)=?""",
                     (mid, dia))
         peds = cur.fetchone()[0]
+
+        # Tempo de entrega: guardamos SOMA e CONTAGEM, nunca a média. O relatório
+        # consolida vários dias, e média de médias mente quando os dias têm pesos
+        # diferentes (1 pedido de 60min + 10 de 10min dá 35 na média de médias e
+        # 14,5 na conta certa). Cada aba divide na hora e as duas batem.
+        # NULLIF(...,0) descarta os dois casos sem medida: o NULL dos pedidos
+        # achados por regex no dsPedidos e o 0 de quem veio pela lista dedicada
+        # sem nrMinPassados. SUM ignora nulos; COUNT(coluna) só conta não-nulos.
+        cur.execute("""SELECT COALESCE(SUM(NULLIF(min_passados,0)),0),
+                              COUNT(NULLIF(min_passados,0))
+                       FROM entrega_vista
+                       WHERE id_entregador=? AND substr(primeiro_visto,1,10)=?""",
+                    (mid, dia))
+        min_soma, ped_medidos = cur.fetchone()
         base_p = [h for h in range(pico[0], pico[1] + 1) if snaps.get(h)]
         cob_p = [h for h in base_p if grid[mid].get(h, 0) >= 50]
 
@@ -77,8 +91,8 @@ def analisar(con, dia, escala=None, pico=PICO, janela=JANELA):
             "h_rodando": round(est.get("RODANDO", 0) * mins / 60, 2),
             "h_parado": round(est.get("PARADO", 0) * mins / 60, 2),
             "pedidos": peds,
+            "min_soma": round(min_soma, 1), "ped_medidos": ped_medidos,
             "pico_cob": len(cob_p), "pico_tot": len(base_p),
-            "grid": {str(h): grid[mid].get(h, 0.0) for h in range(lo, hi + 1)},
         }
         item["ocupacao"] = (round(100.0 * item["h_rodando"] / item["horas"], 1)
                             if item["horas"] else 0.0)
