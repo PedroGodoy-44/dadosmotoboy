@@ -21,7 +21,3 @@ dashboard/build/
 backups/
 __pycache__/
 *.pyc
-
-# cloudflare
-cloudflare/node_modules/
-cloudflare/.wrangler/

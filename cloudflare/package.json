@@ -1,8 +1,0 @@
-{
-  "name": "motoboys-cloudflare",
-  "private": true,
-  "description": "Wrangler local para publicar o dashboard no Cloudflare Pages",
-  "devDependencies": {
-    "wrangler": "^3.90.0"
-  }
-}

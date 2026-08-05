@@ -32,9 +32,8 @@ inicia o coletor. **Nunca usa sudo.**
 
 ### Pré-requisitos
 - Python 3.11+ (testado em 3.12 e 3.14).
-- **Node.js não é necessário.** O deploy é via `git push` (o Cloudflare Pages
-  publica sozinho a cada push). O npm só serve para o caminho opcional do
-  wrangler local — o aviso do `install.sh` sobre npm ausente é inofensivo.
+- **Node.js não é necessário.** O deploy é via `git push` — o Cloudflare publica
+  sozinho a cada push, sem wrangler, sem npm e sem API token.
 
 > Rodando num servidor? Veja [docs/MIGRACAO-OCI.md](docs/MIGRACAO-OCI.md) — runbook
 > de migração para uma VM Oracle Cloud Always Free (grátis, região São Paulo).
@@ -141,15 +140,13 @@ collector/     motor Python (camadas): config, presence(domínio), panel(HTTP),
                database(SQLite/WAL), escala, report, mock, collector(CLI)
   templates/   report.html (template do dashboard)
 dashboard/     html/index.html = saída publicada; scripts/generate.sh
-cloudflare/    wrangler.toml + package.json (wrangler local)
 scripts/       install/start/stop/status/deploy/update/backup .sh
 systemd/       units (.service/.timer/.path) com placeholder %BASE%
-Makefile · README.md · .env.example
+Makefile · README.md · .env.example · wrangler.jsonc (assets do Cloudflare)
 ```
 
 Runtime (gitignored): `.venv/`, `collector/config.json`, `collector/database.db*`,
-`collector/escala.csv`, `collector/logs/`, `dashboard/html/index.html`, `backups/`,
-`.env`, `cloudflare/node_modules/`.
+`collector/escala.csv`, `collector/logs/`, `backups/`, `.env`.
 
 ---
 

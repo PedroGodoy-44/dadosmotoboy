@@ -1,6 +1,0 @@
-# Cloudflare Pages — deploy do dashboard de motoboys.
-# O projeto e criado automaticamente no primeiro `wrangler pages deploy`.
-# Sobrescreva o nome com CF_PAGES_PROJECT no .env se quiser outro.
-name = "motoboys"
-pages_build_output_dir = "../dashboard/html"
-compatibility_date = "2024-11-01"

@@ -2,7 +2,7 @@
 # =============================================================================
 #  install.sh — instala o projeto Motoboys inteiro num comando.
 #  venv + deps + banco + units systemd (user) + linger + enable/start.
-#  NUNCA usa sudo. Node/Wrangler (opcional) sao apenas detectados.
+#  NUNCA usa sudo. Nao precisa de Node: o deploy e via git push.
 # =============================================================================
 set -euo pipefail
 
@@ -29,20 +29,10 @@ echo "==> Inicializando banco..."
 # 3) .env ----------------------------------------------------------------------
 if [[ ! -f "$BASE/.env" && -f "$BASE/.env.example" ]]; then
   cp "$BASE/.env.example" "$BASE/.env"
-  echo "==> .env criado a partir do exemplo — preencha os tokens do Cloudflare."
+  echo "==> .env criado a partir do exemplo — preencha o HEALTHCHECK_URL."
 fi
 
-# 4) Cloudflare/Wrangler (opcional) -------------------------------------------
-if command -v npm >/dev/null 2>&1; then
-  echo "==> npm encontrado — instalando wrangler local em cloudflare/ ..."
-  ( cd "$BASE/cloudflare" && npm install --silent ) || echo "   (falha no npm install — resolva depois)"
-else
-  echo "==> Node/npm ausentes — normal e inofensivo."
-  echo "    O deploy em uso e via git push (o Cloudflare Pages publica no push)"
-  echo "    e NAO precisa de Node. O npm so serve para o wrangler local, opcional."
-fi
-
-# 5) systemd (user) ------------------------------------------------------------
+# 4) systemd (user) ------------------------------------------------------------
 echo "==> Instalando units systemd em $UNIT_DIR"
 mkdir -p "$UNIT_DIR"
 for u in "${UNITS[@]}"; do
@@ -68,4 +58,4 @@ echo "   Timers:   systemctl --user list-timers | grep motoboys"
 echo "   Logs:     journalctl --user -u motoboys-collector -f"
 echo
 echo "   Falta:  1) sessao do painel -> ./ (venv) -m collector.collector --importar-curl curl.txt"
-echo "           2) tokens do Cloudflare no .env  +  make deploy"
+echo "           2) HEALTHCHECK_URL no .env (alerta de coleta parada)"
