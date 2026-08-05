@@ -65,13 +65,28 @@ def analisar(con, dia, escala=None, pico=PICO, janela=JANELA):
         # consolida vários dias, e média de médias mente quando os dias têm pesos
         # diferentes (1 pedido de 60min + 10 de 10min dá 35 na média de médias e
         # 14,5 na conta certa). Cada aba divide na hora e as duas batem.
-        # NULLIF(...,0) descarta os dois casos sem medida: o NULL dos pedidos
-        # achados por regex no dsPedidos e o 0 de quem veio pela lista dedicada
-        # sem nrMinPassados. SUM ignora nulos; COUNT(coluna) só conta não-nulos.
-        cur.execute("""SELECT COALESCE(SUM(NULLIF(min_passados,0)),0),
-                              COUNT(NULLIF(min_passados,0))
-                       FROM entrega_vista
-                       WHERE id_entregador=? AND substr(primeiro_visto,1,10)=?""",
+        #
+        # Duas fontes, nesta ordem de preferência:
+        #  1. `min_passados` — o tempo que o PAINEL informa por pedido. É o dado
+        #     bom, mas só chega na lista dedicada de "entregas em curso", que o
+        #     endpoint em uso (ajax_operacao.php) não devolve: em 05/08/2026 havia
+        #     1242 pedidos gravados e NENHUM com este campo. Fica aqui porque, se
+        #     um dia a lista passar a vir, a métrica melhora sozinha.
+        #  2. Janela observada — do primeiro ao último snapshot em que o pedido
+        #     apareceu. É PISO, não duração real: o pedido pode ter nascido antes
+        #     do primeiro avistamento e sumido depois do último, e a régua tem a
+        #     granularidade do ciclo de coleta (3 min).
+        # NULLIF na janela descarta o pedido visto num snapshot só (janela = 0),
+        # que não diz nada — eram 45 dos 1242. SUM ignora nulos; COUNT(coluna)
+        # só conta os não-nulos, então a contagem é a cobertura real da métrica.
+        cur.execute("""SELECT COALESCE(SUM(t),0), COUNT(t) FROM (
+                         SELECT COALESCE(
+                                  NULLIF(min_passados,0),
+                                  NULLIF(ROUND((julianday(ultimo_visto)
+                                              - julianday(primeiro_visto))*1440,1),0)
+                                ) AS t
+                         FROM entrega_vista
+                         WHERE id_entregador=? AND substr(primeiro_visto,1,10)=?)""",
                     (mid, dia))
         min_soma, ped_medidos = cur.fetchone()
         base_p = [h for h in range(pico[0], pico[1] + 1) if snaps.get(h)]
