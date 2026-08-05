@@ -12,8 +12,10 @@ Esquema idêntico ao motor v2:
 import re
 import sqlite3
 
-from .config import DB_PATH, FRESCOR_MIN, agora
+from .config import DB_PATH, FRESCOR_MIN, agora, get_logger
 from .presence import derivar_estado, haversine, parse_ultimo_acesso
+
+log = get_logger()
 
 RE_PEDIDO = re.compile(r"#(\d{6,})")
 
@@ -24,10 +26,36 @@ RE_PEDIDO = re.compile(r"#(\d{6,})")
 RE_PEDIDO_STATUS = re.compile(r"#(\d{6,})([^<]*)")
 
 
+# Vocabulário observado no dsPedidos, na ordem de vida do pedido:
+#   "Em andamento" -> "Pronto pra Entrega" -> "Saiu para entrega"
+#                                          -> "Entregador na sua porta"
+# Os dois últimos contam como em rota — "na sua porta" é etapa POSTERIOR à
+# saída, e num ciclo de 3 min o pedido pode pular a saída e ser visto só ali.
+EM_ROTA = ("saiu", "na sua porta")
+ANTES_DA_ROTA = ("em andamento", "pronto")
+_desconhecidos = set()
+
+
 def _saiu(txt):
-    """O pedido já saiu para entrega? (vocabulário observado: 'Em andamento',
-    'Pronto pra Entrega', 'Saiu para entrega')."""
-    return "saiu" in (txt or "").lower()
+    """O pedido já está em rota?
+
+    Status desconhecido NÃO conta como saída: deixar o pedido fora da conta
+    erra para menos, enquanto chutar que ele saiu misturaria espera na loja
+    com tempo de entrega e falsearia o número. O aviso no log é o gatilho para
+    classificar o termo novo aqui.
+    """
+    t = (txt or "").strip().lower()
+    if not t:
+        return False
+    if any(k in t for k in EM_ROTA):
+        return True
+    if any(k in t for k in ANTES_DA_ROTA):
+        return False
+    if t not in _desconhecidos:
+        _desconhecidos.add(t)
+        log.warning(f"status de pedido nao classificado: {txt!r} — fica fora da "
+                    "metrica 'em rota' ate entrar em EM_ROTA/ANTES_DA_ROTA")
+    return False
 
 
 def db_init(path=DB_PATH):

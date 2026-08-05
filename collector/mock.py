@@ -33,7 +33,8 @@ def gerar_mock():
     def status(idade):
         return ("Em andamento" if idade < 2
                 else "Pronto pra Entrega" if idade < 4
-                else "Saiu para entrega")
+                else "Saiu para entrega" if idade < 7
+                else "Entregador na sua porta")
 
     base = agora().replace(hour=0, minute=0, second=0, microsecond=0)
     pid = 63300000
