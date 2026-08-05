@@ -89,6 +89,21 @@ def analisar(con, dia, escala=None, pico=PICO, janela=JANELA):
                          WHERE id_entregador=? AND substr(primeiro_visto,1,10)=?)""",
                     (mid, dia))
         min_soma, ped_medidos = cur.fetchone()
+
+        # Tempo EM ROTA: de quando o pedido apareceu como "saiu para entrega"
+        # até a última vez que foi visto. É a entrega propriamente dita, sem o
+        # tempo parado na loja que a janela acima inclui. Só existe para pedidos
+        # coletados depois do rastreio de status por pedido — os antigos ficam
+        # com `saiu_em` NULL e caem fora da conta, então a coluna se preenche
+        # do dia da migração para a frente.
+        cur.execute("""SELECT COALESCE(SUM(t),0), COUNT(t) FROM (
+                         SELECT NULLIF(ROUND((julianday(ultimo_visto)
+                                            - julianday(saiu_em))*1440,1),0) AS t
+                         FROM entrega_vista
+                         WHERE id_entregador=? AND substr(primeiro_visto,1,10)=?
+                           AND saiu_em IS NOT NULL)""",
+                    (mid, dia))
+        rota_soma, ped_rota = cur.fetchone()
         base_p = [h for h in range(pico[0], pico[1] + 1) if snaps.get(h)]
         cob_p = [h for h in base_p if grid[mid].get(h, 0) >= 50]
 
@@ -107,6 +122,7 @@ def analisar(con, dia, escala=None, pico=PICO, janela=JANELA):
             "h_parado": round(est.get("PARADO", 0) * mins / 60, 2),
             "pedidos": peds,
             "min_soma": round(min_soma, 1), "ped_medidos": ped_medidos,
+            "rota_soma": round(rota_soma, 1), "ped_rota": ped_rota,
             "pico_cob": len(cob_p), "pico_tot": len(base_p),
         }
         item["ocupacao"] = (round(100.0 * item["h_rodando"] / item["horas"], 1)

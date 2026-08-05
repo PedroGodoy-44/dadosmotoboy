@@ -17,6 +17,18 @@ from .presence import derivar_estado, haversine, parse_ultimo_acesso
 
 RE_PEDIDO = re.compile(r"#(\d{6,})")
 
+# O dsPedidos traz, por pedido, a LOJA antes do #id e o STATUS depois dele:
+#   <br/>MilkShow #63722445 Saiu para entrega.</br><br/>MilkShow #63722369 Pronto pra Entrega.</br>
+# O status por pedido é a única fonte fina que existe: o idSituacao do registro
+# é do MOTOBOY, e quem carrega dois pedidos em estados diferentes tem um só.
+RE_PEDIDO_STATUS = re.compile(r"#(\d{6,})([^<]*)")
+
+
+def _saiu(txt):
+    """O pedido já saiu para entrega? (vocabulário observado: 'Em andamento',
+    'Pronto pra Entrega', 'Saiu para entrega')."""
+    return "saiu" in (txt or "").lower()
+
 
 def db_init(path=DB_PATH):
     """Abre (criando se preciso) o banco. WAL + PRAGMAs de robustez.
@@ -40,7 +52,16 @@ def db_init(path=DB_PATH):
     con.execute("""CREATE TABLE IF NOT EXISTS entrega_vista(
         id_pedido TEXT, id_entregador TEXT, id_situacao TEXT,
         min_passados INTEGER, primeiro_visto TEXT, ultimo_visto TEXT,
+        ds_situacao TEXT, saiu_em TEXT,
         PRIMARY KEY (id_pedido, id_entregador))""")
+    # Bancos criados antes do rastreio de status por pedido não têm as duas
+    # últimas colunas. ALTER é a única forma no SQLite e não é idempotente,
+    # então checamos antes. Colunas novas nascem NULL: as linhas antigas ficam
+    # sem `saiu_em` e simplesmente não entram na métrica de tempo em rota.
+    cols = {r[1] for r in con.execute("PRAGMA table_info(entrega_vista)")}
+    for nome in ("ds_situacao", "saiu_em"):
+        if nome not in cols:
+            con.execute(f"ALTER TABLE entrega_vista ADD COLUMN {nome} TEXT")
     con.execute("""CREATE TABLE IF NOT EXISTS resumo_diario(
         dia TEXT, id_entregador TEXT, nome TEXT,
         inicio TEXT, fim TEXT,
@@ -91,8 +112,8 @@ def gravar(con, ts, registros, frescor_min=FRESCOR_MIN, entregas=None):
         # sempre extrai o #id do texto: a lista dedicada costuma vir PARCIAL
         # (só alguns motoboys), e o dsPedidos é a única fonte para o resto.
         # A lista 3 roda depois e sobrescreve com o dado melhor (ver _reg_entrega).
-        for pid in RE_PEDIDO.findall(str(r.get("dsPedidos") or "")):
-            _reg_entrega(con, pid, mid, sit, None, iso)
+        for pid, ds in RE_PEDIDO_STATUS.findall(str(r.get("dsPedidos") or "")):
+            _reg_entrega(con, pid, mid, sit, None, iso, ds.strip().strip("."))
 
     # lista 3: entregas em curso (dsNome ali é o CLIENTE — não gravamos)
     for e in (entregas or []):
@@ -101,16 +122,27 @@ def gravar(con, ts, registros, frescor_min=FRESCOR_MIN, entregas=None):
     return n_pres
 
 
-def _reg_entrega(con, pid, mid, sit, minutos, iso):
+def _reg_entrega(con, pid, mid, sit, minutos, iso, ds_sit=None):
     if not pid or not mid:
         return
-    con.execute("""INSERT INTO entrega_vista VALUES (?,?,?,?,?,?)
+    # `saiu_em` é o INSTANTE em que o pedido apareceu como "saiu para entrega"
+    # pela primeira vez. Daí até o pedido sumir do painel é o tempo em rota —
+    # a única medida de entrega de verdade, já que o painel não manda duração.
+    saiu = iso if _saiu(ds_sit) else None
+    con.execute("""INSERT INTO entrega_vista
+                     (id_pedido, id_entregador, id_situacao, min_passados,
+                      primeiro_visto, ultimo_visto, ds_situacao, saiu_em)
+                   VALUES (?,?,?,?,?,?,?,?)
                    ON CONFLICT(id_pedido,id_entregador) DO UPDATE SET
                      ultimo_visto  = excluded.ultimo_visto,
                      id_situacao   = excluded.id_situacao,
                      min_passados  = MAX(COALESCE(entrega_vista.min_passados,0),
-                                         COALESCE(excluded.min_passados,0))""",
-                (pid, mid, sit, minutos, iso, iso))
+                                         COALESCE(excluded.min_passados,0)),
+                     -- a lista dedicada não traz texto: não pode apagar o que veio do dsPedidos
+                     ds_situacao   = COALESCE(excluded.ds_situacao, entrega_vista.ds_situacao),
+                     -- guarda a PRIMEIRA saída, nunca a última
+                     saiu_em       = COALESCE(entrega_vista.saiu_em, excluded.saiu_em)""",
+                (pid, mid, sit, minutos, iso, iso, ds_sit, saiu))
 
 
 def gravar_resumo(con, dia, linhas):

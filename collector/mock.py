@@ -24,10 +24,22 @@ def gerar_mock():
           ("68841", "Marcos Machado de Oliveira", (10, 23), 0.95, 0.75),
           ("71585", "Igor Pereira", (11, 16), 0.90, 0.60)]
     clientes = ["Jake Matheo Nogueira", "Ana Paula Reis", "Carlos Souza"]
+    lojas = ["MilkShow", "Casa de Carnes Dini", "Padaria Macaubas", "Restaurante Villa Cintra"]
+    # O painel nao devolve duracao: o tempo de entrega sai de ver o MESMO pedido
+    # em varios ciclos mudando de status. Um pedido descartavel por ciclo nao
+    # exercitaria nada disso, entao aqui eles vivem de 5 a 12 ciclos (15 a 36
+    # min) e progridem "Em andamento" -> "Pronto pra Entrega" -> "Saiu para
+    # entrega", como o painel real faz.
+    def status(idade):
+        return ("Em andamento" if idade < 2
+                else "Pronto pra Entrega" if idade < 4
+                else "Saiu para entrega")
+
     base = agora().replace(hour=0, minute=0, second=0, microsecond=0)
     pid = 63300000
     for dsc in (1, 0):
         d0 = base - timedelta(days=dsc)
+        ativos = {mid: [] for mid, *_ in eq}       # mid -> [[pid, loja, idade, vida]]
         for p in range(int(8 * 20), int(24 * 20)):
             ts = d0 + timedelta(minutes=3 * p)
             regs, entregas = [], []
@@ -35,24 +47,30 @@ def gerar_mock():
                 dentro = i <= ts.hour < f
                 if dentro and random.random() < fid:
                     ua = ts - timedelta(seconds=random.randint(0, 300))
-                    tem = random.random() < ocu
-                    if tem:
+                    fila = ativos[mid]
+                    for ped in fila:
+                        ped[2] += 1
+                    fila[:] = [ped for ped in fila if ped[2] <= ped[3]]
+                    if len(fila) < 2 and random.random() < ocu:
                         pid += 1
-                        entregas.append({          # lista 3: dsNome = CLIENTE
-                            "dsNome": random.choice(clientes),
-                            "idPedido": str(pid), "idEntregador": mid,
-                            "idSituacao": "5",
-                            "nrMinPassados": random.randint(5, 70),
-                            "nrLatitude": "-21.38435305",
-                            "nrLongitude": "-46.53368242"})
+                        fila.append([pid, random.choice(lojas), 0, random.randint(5, 12)])
+                    for pd, loja, idade, _ in fila:
+                        if status(idade) == "Saiu para entrega":
+                            entregas.append({      # lista 3: dsNome = CLIENTE
+                                "dsNome": random.choice(clientes),
+                                "idPedido": str(pd), "idEntregador": mid,
+                                "idSituacao": "5",
+                                "nrLatitude": "-21.38435305",
+                                "nrLongitude": "-46.53368242"})
+                    texto = "".join(f"<br/>{loja} #{pd} {status(idade)}.</br>"
+                                    for pd, loja, idade, _ in fila)
                     regs.append({
                         "idEntregador": mid, "dsNome": nm,
                         "nrLatitude": f"{-21.37 + random.uniform(-.02,.02):.8f}",
                         "nrLongitude": f"{-46.52 + random.uniform(-.02,.02):.8f}",
-                        "idSituacao": "5" if tem else 0,
-                        "qtPedidos": 1 if tem else 0,
-                        "dsPedidos": f"Loja #{pid} Saiu para entrega." if tem
-                                     else "Sem pedido no momento",
+                        "idSituacao": "5" if fila else 0,
+                        "qtPedidos": len(fila),
+                        "dsPedidos": texto or "Sem pedido no momento",
                         "dsStatus": f"Últ. Acesso => Hoje as {ua:%H:%M:%S}",
                         "nrKMDistancia": 0})
                 else:

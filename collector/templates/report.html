@@ -94,23 +94,27 @@ let h=`<div class=k>
 <div class=kp><b>${tp}</b><span>pedidos</span></div>
 <div class=kp><b>${tk.toFixed(0)} km</b><span>distancia</span></div>
 <div class=kp><b>${Math.round(r.snapshots/Math.max(1,r.tentativas)*100)}%</b><span>cobertura coletor</span></div></div>`;
-h+=`<div class=card><table><tr><th>Motoboy</th><th>Tempo medio</th><th>Turno</th>
+h+=`<div class=card><table><tr><th>Motoboy</th><th>Em rota</th><th>Tempo total</th><th>Turno</th>
 <th>Horas c/ pedido</th><th>Ped</th><th>Distancia</th>${r.tem_escala?"<th>Aderencia</th>":""}</tr>`;
 r.motoboys.forEach(m=>{
 /* soma/contagem vem do report.py; a divisao acontece aqui, na ponta */
 const tm=m.ped_medidos?m.min_soma/m.ped_medidos:null;
+const tr=m.ped_rota?m.rota_soma/m.ped_rota:null;
 let ad="";if(r.tem_escala){const v=m.aderencia;
 ad=`<td class="${v==null?"":v>=90?"ok":v>=60?"wr":"bad"}">${v==null?"-":v+"%"}</td>`}
 const tn=m.inicio&&m.fim?`${m.inicio}&rarr;${m.fim}`:"-";
 const km=(r.trajetos||{})[m.id];
 h+=`<tr><td class=nm>${m.nome}</td>
-<td title="${m.ped_medidos} de ${m.pedidos} pedidos com tempo medido">${tm==null?"-":tm.toFixed(0)+" min"}</td>
+<td title="${m.ped_rota} de ${m.pedidos} pedidos com saida registrada">${tr==null?"-":tr.toFixed(0)+" min"}</td>
+<td title="${m.ped_medidos} de ${m.pedidos} pedidos medidos">${tm==null?"-":tm.toFixed(0)+" min"}</td>
 <td>${tn}</td><td>${m.horas.toFixed(1)}</td>
 <td>${m.pedidos}</td><td>${km?km.km.toFixed(1)+" km":"-"}</td>${ad}</tr>`});
-h+=`</table><div class=lg><b>Tempo medio</b> = minutos entre a primeira e a ultima vez que
-o pedido foi visto no painel. E <b>piso</b>, nao duracao real: o pedido pode ter nascido
-antes e sumido depois, e a regua tem a granularidade da coleta (3 min). Pedido visto num
-snapshot so fica de fora — passe o mouse na celula para ver quantos entraram na conta.
+h+=`</table><div class=lg><b>Em rota</b> = do momento em que o pedido apareceu como "saiu
+para entrega" ate sumir do painel: e a entrega em si. <b>Tempo total</b> conta desde a
+primeira aparicao do pedido, entao inclui a espera na loja — a diferenca entre os dois e
+quanto tempo o pedido ficou pronto esperando. Ambos sao <b>piso</b>, com resolucao de 3 min
+(o ciclo da coleta), e "Em rota" so existe para pedidos coletados a partir de 05/08/2026.
+Passe o mouse para ver quantos pedidos entraram em cada conta.
 <b>Horas c/ pedido</b> conta o tempo com ao menos uma entrega em maos:
 o painel nao lista quem esta logado e ocioso, entao a espera por corrida nao entra aqui.</div></div>`;
 const f=r.motoboys.filter(m=>m.faltou&&m.faltou.length);
@@ -240,18 +244,20 @@ const por=new Map();let snaps=0,tent=0;
 dias.forEach(d=>{const r=P.dias[d];snaps+=r.snapshots;tent+=r.tentativas;
   (r.motoboys||[]).forEach(m=>{
     const a=por.get(m.id)||{id:m.id,nome:m.nome,horas:0,rodando:0,pedidos:0,km:0,dias:0,
-      min_soma:0,ped_medidos:0};
+      min_soma:0,ped_medidos:0,rota_soma:0,ped_rota:0};
     a.nome=m.nome;a.horas+=m.horas;a.rodando+=m.h_rodando;a.pedidos+=m.pedidos;a.dias++;
     /* soma-se o acumulado bruto, nunca a media do dia: dias com 1 e com 10
        pedidos nao pesam igual, e media de medias entregaria o numero errado. */
     a.min_soma+=m.min_soma;a.ped_medidos+=m.ped_medidos;
+    a.rota_soma+=m.rota_soma||0;a.ped_rota+=m.ped_rota||0;
     const t=(r.trajetos||{})[m.id];if(t)a.km+=t.km;
     por.set(m.id,a)})});
 const linhas=[...por.values()].sort((x,y)=>y.horas-x.horas);
 const tot=linhas.reduce((s,a)=>({horas:s.horas+a.horas,rodando:s.rodando+a.rodando,
   pedidos:s.pedidos+a.pedidos,km:s.km+a.km,
-  min_soma:s.min_soma+a.min_soma,ped_medidos:s.ped_medidos+a.ped_medidos}),
-  {horas:0,rodando:0,pedidos:0,km:0,min_soma:0,ped_medidos:0});
+  min_soma:s.min_soma+a.min_soma,ped_medidos:s.ped_medidos+a.ped_medidos,
+  rota_soma:s.rota_soma+a.rota_soma,ped_rota:s.ped_rota+a.ped_rota}),
+  {horas:0,rodando:0,pedidos:0,km:0,min_soma:0,ped_medidos:0,rota_soma:0,ped_rota:0});
 /* NAO ha metrica de ocupacao aqui, de proposito. O painel so lista o motoboy
    enquanto ele tem pedido em maos (verificado: nenhum snapshot com
    qt_pedidos=0 em 3286, e o motoboy some da lista nos intervalos ociosos),
@@ -260,7 +266,8 @@ const tot=linhas.reduce((s,a)=>({horas:s.horas+a.horas,rodando:s.rodando+a.rodan
    Medir ociosidade exige outro nrOperacao do painel, que liste tambem quem
    esta logado sem corrida. */
 linhas.forEach(a=>{a.pedDia=a.dias?a.pedidos/a.dias:0;
-  a.minMedio=a.ped_medidos?a.min_soma/a.ped_medidos:null});
+  a.minMedio=a.ped_medidos?a.min_soma/a.ped_medidos:null;
+  a.rotaMedia=a.ped_rota?a.rota_soma/a.ped_rota:null});
 return{dias,linhas,tot,snaps,tent}}
 
 function relatorio(){const de=document.getElementById("de").value,
@@ -281,25 +288,28 @@ h+=`<div class=k>
 <div class=kp><b>${g.tot.km.toFixed(0)} km</b><span>distancia total</span></div>
 <div class=kp><b>${cob}%</b><span>cobertura do coletor</span></div></div>`;
 h+=`<div class=card><table><thead><tr><th>Motoboy</th><th>Dias</th><th>Horas com pedido</th>
-<th></th><th>Pedidos</th><th>Pedidos/dia</th><th>Tempo medio</th><th>Distancia</th></tr></thead><tbody>`;
+<th></th><th>Pedidos</th><th>Pedidos/dia</th><th>Em rota</th><th>Tempo total</th><th>Distancia</th></tr></thead><tbody>`;
 g.linhas.forEach(a=>{h+=`<tr><td class=nm>${a.nome}</td><td>${a.dias}</td>
 <td>${a.horas.toFixed(1)}</td>
 <td style=width:110px><span class=bar-h style="width:${Math.round(a.horas/maxr*100)}px"></span></td>
 <td>${a.pedidos}</td><td>${a.pedDia.toFixed(1)}</td>
-<td title="${a.ped_medidos} de ${a.pedidos} pedidos com tempo medido">${a.minMedio==null?"-":a.minMedio.toFixed(0)+" min"}</td>
+<td title="${a.ped_rota} de ${a.pedidos} pedidos com saida registrada">${a.rotaMedia==null?"-":a.rotaMedia.toFixed(0)+" min"}</td>
+<td title="${a.ped_medidos} de ${a.pedidos} pedidos medidos">${a.minMedio==null?"-":a.minMedio.toFixed(0)+" min"}</td>
 <td>${a.km.toFixed(1)} km</td></tr>`});
 h+=`<tr class=tot><td>TOTAL</td><td>${g.dias.length}</td><td>${g.tot.horas.toFixed(1)}</td>
 <td></td><td>${g.tot.pedidos}</td>
 <td>${g.dias.length?(g.tot.pedidos/g.dias.length).toFixed(1):"0"}</td>
+<td>${g.tot.ped_rota?(g.tot.rota_soma/g.tot.ped_rota).toFixed(0)+" min":"-"}</td>
 <td>${g.tot.ped_medidos?(g.tot.min_soma/g.tot.ped_medidos).toFixed(0)+" min":"-"}</td>
 <td>${g.tot.km.toFixed(1)} km</td></tr></tbody></table>
 <div class=lg><b>Horas com pedido</b> conta o tempo em que o motoboy aparecia no painel
 com ao menos uma entrega em maos. O painel nao lista quem esta logado e ocioso, entao o
 tempo de espera por corrida <b>nao esta medido aqui</b> — estes numeros sao piso, nao
-jornada total. <b>Tempo medio</b> mede da primeira a ultima aparicao do pedido no painel:
-tambem e piso, com resolucao de 3 min, e ignora quem apareceu num snapshot so — a celula
-mostra quantos entraram. O TOTAL e a media ponderada pelos pedidos medidos, nao a media da
-coluna. Distancia descarta deslocamentos abaixo de 60 m (GPS parado) e acima de
+jornada total. <b>Em rota</b> mede de "saiu para entrega" ate o pedido sumir do painel;
+<b>Tempo total</b> mede desde a primeira aparicao do pedido e portanto inclui a espera na
+loja. Os dois sao piso, com resolucao de 3 min, e "Em rota" so cobre pedidos coletados a
+partir de 05/08/2026 — a celula mostra quantos entraram em cada conta. Os TOTAIS sao medias
+ponderadas pelos pedidos, nao a media das colunas. Distancia descarta deslocamentos abaixo de 60 m (GPS parado) e acima de
 5 km por intervalo de 3 min (buraco de coleta).</div></div>`;
 h+=`<div class=card><h3 style="margin:0 0 10px;font-size:14px">Por dia</h3>
 <table><thead><tr><th>Dia</th><th>Motoboys</th><th>Horas com pedido</th><th>Pedidos</th>
