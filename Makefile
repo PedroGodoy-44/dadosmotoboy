@@ -1,5 +1,5 @@
 # Makefile — atalhos do projeto Motoboys.
-.PHONY: install run stop status deploy logs update backup mock report import test push-sessao help
+.PHONY: install run stop status deploy logs update backup mock report import test push-sessao renovar help
 
 PY := .venv/bin/python
 
@@ -14,7 +14,8 @@ help:
 	@echo "make backup   - backup consistente do banco + config"
 	@echo "make mock     - gera dados sinteticos e o relatorio"
 	@echo "make report   - regenera o relatorio HTML"
-	@echo "make push-sessao CURL=curl.txt - renova a sessao no servidor remoto"
+	@echo "make push-sessao CURL=curl.txt - renova a sessao no servidor a partir de um cURL"
+	@echo "make renovar  - renova a sessao no servidor lendo o cookie do Firefox (sem F12)"
 
 install:
 	./scripts/install.sh
@@ -56,3 +57,6 @@ test:
 push-sessao:
 	@test -n "$(CURL)" || (echo "uso: make push-sessao CURL=curl.txt [HOST=ubuntu@IP]" && exit 1)
 	./scripts/push-sessao.sh $(CURL) $(HOST)
+
+renovar:
+	./scripts/renovar-sessao.sh $(HOST)

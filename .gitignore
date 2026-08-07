@@ -3,7 +3,7 @@
 curl.txt
 
 # runtime do coletor
-collector/config.json
+collector/config.json*
 collector/database.db
 collector/database.db-wal
 collector/database.db-shm
